@@ -1,7 +1,9 @@
 .DS_Store
 /.build
 /Packages
+/Package.resolved
 /*.xcodeproj
+/.swiftpm
 xcuserdata/
 DerivedData/
 .swiftpm/config/registries.json
