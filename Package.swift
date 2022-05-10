@@ -12,6 +12,7 @@ let package = Package(
         .tvOS(.v13),
     ],
     dependencies: [
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.32.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", branch: "main"),
     ],
     targets: [
@@ -19,7 +20,12 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
         .executableTarget(
             name: "ssh-client",
-            dependencies: [.product(name: "NIOSSH", package: "swift-nio-ssh")]),
+            dependencies: [
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),            ]
+        ),
         .testTarget(
             name: "ssh-clientTests",
             dependencies: ["ssh-client"]),
