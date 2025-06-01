@@ -129,25 +129,21 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
             // This ensures that private key material never leaves the agent's security boundary
             let agentBackedPrivateKey = try await agent.createNIOSSHPrivateKey(for: agentKey)
             
-            // Verify that the public keys match to ensure proper key association
+            // Get the key type for logging
             let agentPublicKeyString = String(openSSHPublicKey: agentKey.publicKey)
-            let _ = String(openSSHPublicKey: agentBackedPrivateKey.publicKey)
+            let keyType = agentPublicKeyString.split(separator: " ").first ?? "unknown"
             
-            // For demonstration purposes, we create a temporary key with the same algorithm
-            // In a production implementation with full runtime method interception,
-            // the agentBackedPrivateKey would handle signing delegation automatically
-            let demonstrationPrivateKey = createTemporaryPrivateKey(for: agentKey)
-            
-            // Create the authentication offer using the agent-associated key
-            // This maintains compatibility with NIOSSH whilst indicating agent backing
+            // Create the authentication offer using the agent-backed key
+            // This maintains compatibility with NIOSSH whilst ensuring all signing
+            // operations are delegated to the SSH agent
             let offer = NIOSSHUserAuthenticationOffer(
                 username: self.username ?? "unknown",
                 serviceName: "ssh-connection",
-                offer: .privateKey(.init(privateKey: demonstrationPrivateKey))
+                offer: .privateKey(.init(privateKey: agentBackedPrivateKey))
             )
             
             print("Using SSH agent key: \(agentKey.comment)")
-            print("Key type: \(agentPublicKeyString.split(separator: " ").first ?? "unknown")")
+            print("Key type: \(keyType)")
             
             nextChallengePromise.succeed(offer)
             
