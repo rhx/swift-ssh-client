@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ssh-client}",
+            "name": "Debug ssh-client",
+            "program": "${workspaceFolder:ssh-client}/.build/debug/ssh-client",
+            "preLaunchTask": "swift: Build Debug ssh-client"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ssh-client}",
+            "name": "Release ssh-client",
+            "program": "${workspaceFolder:ssh-client}/.build/release/ssh-client",
+            "preLaunchTask": "swift: Build Release ssh-client"
+        }
+    ]
+}
