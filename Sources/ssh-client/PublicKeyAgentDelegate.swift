@@ -1,11 +1,12 @@
 //
 //  PublicKeyAgentDelegate.swift
 //  
-//
+//  Copyright © 2022, 2025 Rene Hexel. All rights reserved.
 //  Created by Rene Hexel on 12/5/2022.
 //
 import Dispatch
 import Foundation
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOSSH
 
