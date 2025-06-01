@@ -1,7 +1,7 @@
 //
 //  ssh-client.swift
 //
-//  Copyright © 2022, 2025 Rene Hexel. All rights reserved.
+//  Copyright 2022, 2025 Rene Hexel. All rights reserved.
 //  Created by Rene Hexel on 12/5/2022.
 //
 import Foundation
@@ -10,6 +10,7 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 import ArgumentParser
+import Foundation
 
 // This file contains an example NIO SSH client. As NIO SSH is currently under active
 // development this file doesn't currently do all that much, but it does provide a binary you
@@ -143,13 +144,14 @@ struct SSHClient: ParsableCommand {
     ///
     /// - Parameter destination: The SSH destination string (user@host[:port])
     /// - Returns: A tuple containing host, port, and user.
-    static func parseDestination(_ destination: String) -> (host: String, port: Int, user: String?) {
-        var user: String?
-        var hostPort: String
+    static func parseDestination(_ destination: String) -> (host: String, port: Int, user: String) {
+        let user: String
+        let hostPort: String
         if let atIdx = destination.firstIndex(of: "@") {
             user = String(destination[..<atIdx])
             hostPort = String(destination[destination.index(after: atIdx)...])
         } else {
+            user = NSUserName()
             hostPort = destination
         }
         let host: String
