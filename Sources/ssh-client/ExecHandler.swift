@@ -135,6 +135,7 @@ func writeToFD(_ fd: Int32, _ buf: UnsafeRawPointer!, _ nbyte: Int) -> Int {
 
 enum SSHClientError: Swift.Error {
     case passwordAuthenticationNotSupported
+    case publicKeyAuthenticationNotSupported
     case commandExecFailed
     case invalidChannelType
     case invalidData
