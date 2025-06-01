@@ -47,9 +47,19 @@ defer {
     try! group.syncShutdownGracefully()
 }
 
+// Choose the appropriate authentication delegate based on command-line flags
+let authDelegate: NIOSSHClientUserAuthenticationDelegate
+if true { // FIXME: should try SSH agent first and fall back to interactive password authentication if unsuccessful (but only if run from a TTY).
+    print("Using SSH agent for authentication...")
+    authDelegate = PublicKeyAgentDelegate(username: parseResult.user, password: parseResult.password)
+} else {
+    print("Using interactive password authentication...")
+    authDelegate = InteractivePasswordPromptDelegate(username: parseResult.user, password: parseResult.password)
+}
+
 let bootstrap = ClientBootstrap(group: group)
     .channelInitializer { channel in
-        channel.pipeline.addHandlers([NIOSSHHandler(role: .client(.init(userAuthDelegate: InteractivePasswordPromptDelegate(username: parseResult.user, password: parseResult.password), serverAuthDelegate: AcceptAllHostKeysDelegate())), allocator: channel.allocator, inboundChildChannelInitializer: nil), ErrorHandler()])
+        channel.pipeline.addHandlers([NIOSSHHandler(role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: AcceptAllHostKeysDelegate())), allocator: channel.allocator, inboundChildChannelInitializer: nil), ErrorHandler()])
     }
     .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
     .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
