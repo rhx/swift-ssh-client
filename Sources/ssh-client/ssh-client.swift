@@ -85,9 +85,17 @@ struct SSHClient: ParsableCommand {
             authDelegate = InteractivePasswordPromptDelegate(username: user, password: password)
         }
 
+        // NOTE: Swift 6 compatibility: NIOSSHHandler is not Sendable, but SwiftNIO's API is already annotated for concurrency compatibility.
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { channel in
-                channel.pipeline.addHandlers([NIOSSHHandler(role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: AcceptAllHostKeysDelegate())), allocator: channel.allocator, inboundChildChannelInitializer: nil), ErrorHandler()])
+                channel.pipeline.addHandlers([
+                    NIOSSHHandler(
+                        role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: AcceptAllHostKeysDelegate())),
+                        allocator: channel.allocator,
+                        inboundChildChannelInitializer: nil
+                    ),
+                    ErrorHandler()
+                ])
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
@@ -101,9 +109,11 @@ struct SSHClient: ParsableCommand {
                                               bindPort: listen.bindPort) { inboundChannel in
                 channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
                     let promise = inboundChannel.eventLoop.makePromise(of: Channel.self)
-                    let directTCPIP = SSHChannelType.DirectTCPIP(targetHost: String(listen.targetHost),
-                                                                 targetPort: listen.targetPort,
-                                                                 originatorAddress: inboundChannel.remoteAddress!)
+                    let directTCPIP = SSHChannelType.DirectTCPIP(
+                        targetHost: String(listen.targetHost),
+                        targetPort: listen.targetPort,
+                        originatorAddress: inboundChannel.remoteAddress!
+                    )
                     sshHandler.createChannel(promise,
                                              channelType: .directTCPIP(directTCPIP)) { childChannel, channelType in
                         guard case .directTCPIP = channelType else {
@@ -117,23 +127,56 @@ struct SSHClient: ParsableCommand {
                     return promise.futureResult.map { _ in }
                 }
             }
-            try! server.run().wait()
+            do {
+                try server.run().wait()
+            } catch {
+                print("[ssh-client] Server error: \(error)")
+                Foundation.exit(255)
+            }
         } else {
-            // We've been asked to exec.
+            // We've been asked to exec a remote command (like OpenSSH). Open a session channel and send an exec request.
             let exitStatusPromise = channel.eventLoop.makePromise(of: Int.self)
-            let childChannel: Channel = try! channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
-                let promise = channel.eventLoop.makePromise(of: Channel.self)
-                sshHandler.createChannel(promise) { childChannel, channelType in
-                    guard channelType == .session else {
-                        return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
+            let childChannel: Channel
+            do {
+                childChannel = try channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
+                    let promise = channel.eventLoop.makePromise(of: Channel.self)
+                    // Open a session channel (not direct-tcpip)
+                    sshHandler.createChannel(promise) { childChannel, channelType in
+                        guard channelType == .session else {
+                            return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
+                        }
+                        // Add SimpleExecHandler to handle the exec request and I/O
+                        return childChannel.pipeline.addHandlers([
+                            SimpleExecHandler(command: self.command.joined(separator: " "), completePromise: exitStatusPromise),
+                            ErrorHandler()
+                        ])
                     }
-                    return childChannel.pipeline.addHandlers([ExampleExecHandler(command: self.command.joined(separator: " "), completePromise: exitStatusPromise), ErrorHandler()])
-                }
-                return promise.futureResult
-            }.wait()
-            try childChannel.closeFuture.wait()
-            let exitStatus = try! exitStatusPromise.futureResult.wait()
-            try! channel.close().wait()
+                    return promise.futureResult
+                }.wait()
+            } catch {
+                print("[ssh-client] Channel creation error: \(error)")
+                Foundation.exit(255)
+            }
+            // Wait for the remote command to complete
+            do {
+                try childChannel.closeFuture.wait()
+            } catch {
+                print("[ssh-client] Channel close error: \(error)")
+                Foundation.exit(255)
+            }
+            let exitStatus: Int
+            do {
+                exitStatus = try exitStatusPromise.futureResult.wait()
+            } catch {
+                print("[ssh-client] Command execution error: \(error)")
+                Foundation.exit(255)
+            }
+            do {
+                try channel.close().wait()
+            } catch {
+                print("[ssh-client] Connection close error: \(error)")
+                Foundation.exit(255)
+            }
             Foundation.exit(Int32(exitStatus))
         }
     }

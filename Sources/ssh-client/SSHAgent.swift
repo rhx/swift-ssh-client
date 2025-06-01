@@ -87,33 +87,116 @@ public struct SSHAgentKey {
     /// - Parameter keyBlob: The binary key data from the SSH agent
     /// - Returns: An OpenSSH format public key string
     /// - Throws: `SSHAgentError` if the key format is not recognised or supported
-    private static func convertKeyBlobToOpenSSHFormat(_ keyBlob: Data) throws -> String {
+    static func convertKeyBlobToOpenSSHFormat(_ keyBlob: Data) throws -> String {
         var offset = 0
         
-        // Read the key type (algorithm name)
-        guard offset + 4 <= keyBlob.count else {
-            throw SSHAgentError.invalidKeyData("Key blob too short for algorithm name length")
+        func readUInt32() throws -> UInt32 {
+            guard offset + 4 <= keyBlob.count else {
+                throw SSHAgentError.invalidKeyData("Key blob too short for UInt32 at offset \(offset)")
+            }
+            let val = keyBlob.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
+                $0.load(as: UInt32.self).bigEndian
+            }
+            offset += 4
+            return val
         }
-        
-        let algorithmNameLength = keyBlob.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
-            $0.load(as: UInt32.self).bigEndian
+        func readData(_ length: Int) throws -> Data {
+            guard offset + length <= keyBlob.count else {
+                throw SSHAgentError.invalidKeyData("Key blob too short for data of length \(length) at offset \(offset)")
+            }
+            let d = keyBlob.subdata(in: offset..<(offset + length))
+            offset += length
+            return d
         }
-        offset += 4
-        
-        guard offset + Int(algorithmNameLength) <= keyBlob.count else {
-            throw SSHAgentError.invalidKeyData("Key blob too short for algorithm name")
+        func readString() throws -> Data {
+            let len = try readUInt32()
+            return try readData(Int(len))
         }
-        
-        let algorithmNameData = keyBlob.subdata(in: offset..<(offset + Int(algorithmNameLength)))
+        // Read algorithm name
+        let algorithmNameData = try readString()
         guard let algorithmName = String(data: algorithmNameData, encoding: .utf8) else {
+            print("[SSHAgent] Invalid algorithm name encoding: \(algorithmNameData as NSData)")
             throw SSHAgentError.invalidKeyData("Invalid algorithm name encoding")
         }
-        
-        // Convert the entire key blob to base64
-        let base64KeyData = keyBlob.base64EncodedString()
-        
-        // Return the OpenSSH format: "algorithm base64-key"
-        return "\(algorithmName) \(base64KeyData)"
+        print("[SSHAgent] Parsing key type: \(algorithmName)")
+        switch algorithmName {
+        case "ssh-ed25519":
+            // [string "ssh-ed25519"][string pubkey]
+            let pubkey = try readString()
+            print("[SSHAgent] Parsed ed25519 pubkey (len: \(pubkey.count))")
+            var blob = Data()
+            var nameLen = UInt32(algorithmNameData.count).bigEndian
+            blob.append(Data(bytes: &nameLen, count: 4))
+            blob.append(algorithmNameData)
+            var pubkeyLen = UInt32(pubkey.count).bigEndian
+            blob.append(Data(bytes: &pubkeyLen, count: 4))
+            blob.append(pubkey)
+            let base64KeyData = blob.base64EncodedString()
+            print("[SSHAgent] ed25519 OpenSSH string: ssh-ed25519 \(base64KeyData.prefix(16))...")
+            return "ssh-ed25519 \(base64KeyData)"
+        case "ssh-rsa":
+            // [string "ssh-rsa"][mpint e][mpint n]
+            let e = try readString()
+            let n = try readString()
+            func printMpint(_ label: String, _ data: Data) {
+                print("[SSHAgent] RSA \(label) (len: \(data.count)): 0x" + data.map { String(format: "%02x", $0) }.joined())
+                print("[SSHAgent] RSA \(label) (base64): \(data.base64EncodedString())")
+            }
+            print("[SSHAgent] Parsed rsa exponent (e, len: \(e.count)), modulus (n, len: \(n.count))")
+            printMpint("exponent", e)
+            printMpint("modulus", n)
+            // Check for mpint encoding issues (should be minimal, no unnecessary leading zero unless high bit set)
+            func minimalMpint(_ data: Data) -> Data {
+                if data.count > 1 && data.first == 0x00 && (data[1] & 0x80) == 0 {
+                    // Unnecessary leading zero, strip it
+                    return data.dropFirst()
+                }
+                return data
+            }
+            let eFixed = minimalMpint(e)
+            let nFixed = minimalMpint(n)
+            if eFixed.count != e.count || nFixed.count != n.count {
+                print("[SSHAgent] Fixed mpint encoding: exponent len \(eFixed.count), modulus len \(nFixed.count)")
+            }
+            var blob = Data()
+            var nameLen = UInt32(algorithmNameData.count).bigEndian
+            blob.append(Data(bytes: &nameLen, count: 4))
+            blob.append(algorithmNameData)
+            var eLen = UInt32(eFixed.count).bigEndian
+            blob.append(Data(bytes: &eLen, count: 4))
+            blob.append(eFixed)
+            var nLen = UInt32(nFixed.count).bigEndian
+            blob.append(Data(bytes: &nLen, count: 4))
+            blob.append(nFixed)
+            let base64KeyData = blob.base64EncodedString()
+            print("[SSHAgent] rsa OpenSSH string: ssh-rsa \(base64KeyData.prefix(16))...")
+            return "ssh-rsa \(base64KeyData)"
+        case "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521":
+            // [string type][string curve][string Q]
+            let curve = try readString()
+            let Q = try readString()
+            guard let curveName = String(data: curve, encoding: .utf8) else {
+                print("[SSHAgent] ECDSA curve name invalid: \(curve as NSData)")
+                throw SSHAgentError.invalidKeyData("Invalid ECDSA curve name")
+            }
+            print("[SSHAgent] Parsed ECDSA curve: \(curveName), Q len: \(Q.count)")
+            var blob = Data()
+            var nameLen = UInt32(algorithmNameData.count).bigEndian
+            blob.append(Data(bytes: &nameLen, count: 4))
+            blob.append(algorithmNameData)
+            var curveLen = UInt32(curve.count).bigEndian
+            blob.append(Data(bytes: &curveLen, count: 4))
+            blob.append(curve)
+            var QLen = UInt32(Q.count).bigEndian
+            blob.append(Data(bytes: &QLen, count: 4))
+            blob.append(Q)
+            let base64KeyData = blob.base64EncodedString()
+            print("[SSHAgent] ECDSA OpenSSH string: \(algorithmName) \(base64KeyData.prefix(16))...")
+            return "\(algorithmName) \(base64KeyData)"
+        default:
+            print("[SSHAgent] Unsupported or unknown key type: \(algorithmName). Skipping.")
+            throw SSHAgentError.keyParsingFailed("Unsupported or unknown key type: \(algorithmName)")
+        }
     }
 }
 
@@ -420,10 +503,13 @@ public actor SSHAgent {
             
             // Create key
             do {
+                print("[SSHAgent] Raw keyBlob (base64): \(keyBlob.base64EncodedString())")
                 let key = try SSHAgentKey(keyBlob: keyBlob, comment: comment)
+                print("[SSHAgent] Parsed key type: \(String(data: keyBlob.prefix(32), encoding: .utf8) ?? "n/a")  comment: \(comment)")
                 keys.append(key)
             } catch {
-                print("Warning: Failed to parse key from agent: \(error)")
+                print("[SSHAgent] Failed to parse key from agent. Comment: \(comment). Error: \(error)")
+                print("[SSHAgent] KeyBlob (base64): \(keyBlob.base64EncodedString())")
             }
         }
         

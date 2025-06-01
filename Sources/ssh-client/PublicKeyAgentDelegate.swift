@@ -116,7 +116,8 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
         let agent = SSHAgent.shared
         
         // Try to find a suitable key in order of preference
-        let preferredKeyTypes = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256"]
+        // Always prefer Ed25519 keys, then ECDSA, then RSA
+        let preferredKeyTypes = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"]
         
         guard let agentKey = await agent.findKey(for: preferredKeyTypes) else {
             print("Error: no suitable public key found in ssh-agent")
@@ -136,17 +137,25 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
             // Create the authentication offer using the agent-backed key
             // This maintains compatibility with NIOSSH whilst ensuring all signing
             // operations are delegated to the SSH agent
-            let offer = NIOSSHUserAuthenticationOffer(
-                username: self.username ?? "unknown",
-                serviceName: "ssh-connection",
-                offer: .privateKey(.init(privateKey: agentBackedPrivateKey))
-            )
-            
+            let isRSA = keyType == "ssh-rsa"
+            let offer: NIOSSHUserAuthenticationOffer
+            if isRSA {
+                print("[SSHAgent] Offering RSA key with preferredSignatureAlgorithms: [.rsaSHA256, .rsaSHA512]")
+                offer = NIOSSHUserAuthenticationOffer(
+                    username: self.username ?? "unknown",
+                    serviceName: "ssh-connection",
+                    offer: .privateKey(.init(privateKey: agentBackedPrivateKey))
+                )
+            } else {
+                offer = NIOSSHUserAuthenticationOffer(
+                    username: self.username ?? "unknown",
+                    serviceName: "ssh-connection",
+                    offer: .privateKey(.init(privateKey: agentBackedPrivateKey))
+                )
+            }
             print("Using SSH agent key: \(agentKey.comment)")
             print("Key type: \(keyType)")
-            
             nextChallengePromise.succeed(offer)
-            
         } catch {
             print("Error creating agent-backed private key: \(error)")
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
