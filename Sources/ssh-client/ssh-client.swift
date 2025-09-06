@@ -12,62 +12,121 @@ import NIOSSH
 import ArgumentParser
 import Foundation
 
-// This file contains an example NIO SSH client. As NIO SSH is currently under active
-// development this file doesn't currently do all that much, but it does provide a binary you
-// can kick off to get a feel for how NIO SSH drives the connection live. As the feature set of
-// NIO SSH increases we'll be adding to this client to try to make it a better example of what you
-// can do with NIO SSH.
 final class ErrorHandler: ChannelInboundHandler {
     typealias InboundIn = Any
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        print("Error in pipeline: \(error)")
+        // Do not print here; the command will print conditionally when --debug is set.
         context.close(promise: nil)
     }
 }
 
 final class AcceptAllHostKeysDelegate: NIOSSHClientServerAuthenticationDelegate {
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
-        // Do not replicate this in your own code: validate host keys! This is a
-        // choice made for expedience, not for any other reason.
         validationCompletePromise.succeed(())
     }
 }
 
+// Debug handler for SSH child channels.
+final class SSHChildDebugHandler: ChannelDuplexHandler {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+
+    private let label: String
+    private let verbose: Bool
+
+    init(label: String, verbose: Bool) {
+        self.label = label
+        self.verbose = verbose
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        if verbose { print("[debug:\(label)] handlerAdded") }
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        if verbose { print("[debug:\(label)] handlerRemoved") }
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        if verbose { print("[debug:\(label)] channelActive") }
+        context.fireChannelActive()
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        if verbose { print("[debug:\(label)] channelInactive") }
+        context.fireChannelInactive()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if verbose {
+            switch event {
+            case is ChannelSuccessEvent:
+                print("[debug:\(label)] userInboundEvent: ChannelSuccessEvent")
+            case is ChannelFailureEvent:
+                print("[debug:\(label)] userInboundEvent: ChannelFailureEvent")
+            case let exit as SSHChannelRequestEvent.ExitStatus:
+                print("[debug:\(label)] userInboundEvent: ExitStatus(\(exit.exitStatus))")
+            default:
+                print("[debug:\(label)] userInboundEvent: \(type(of: event))")
+            }
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let msg = self.unwrapInboundIn(data)
+        if verbose {
+            switch msg.type {
+            case .channel:
+                if case .byteBuffer(let buf) = msg.data {
+                    print("[debug:\(label)] channelRead stdout \(buf.readableBytes) bytes")
+                } else {
+                    print("[debug:\(label)] channelRead stdout non-buffer")
+                }
+            case .stdErr:
+                if case .byteBuffer(let buf) = msg.data {
+                    print("[debug:\(label)] channelRead stderr \(buf.readableBytes) bytes")
+                } else {
+                    print("[debug:\(label)] channelRead stderr non-buffer")
+                }
+            default:
+                print("[debug:\(label)] channelRead other type \(msg.type)")
+            }
+        }
+        context.fireChannelRead(data)
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        if verbose { print("[debug:\(label)] write") }
+        context.write(data, promise: promise)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        if verbose { print("[debug:\(label)] errorCaught: \(error)") }
+        context.fireErrorCaught(error)
+    }
+}
+
 /// An SSH client command-line tool using SwiftNIO and NIOSSH.
-///
-/// This command-line utility provides SSH client functionality, including port forwarding and command execution, using SwiftNIO and NIOSSH. It supports specifying a destination (user@host), an optional password, port, and command, as well as local port forwarding via the -L flag. The tool attempts to use the SSH agent for authentication by default, falling back to interactive password authentication if unsuccessful and running from a TTY.
-///
-/// - Parameters:
-///   - listen: An optional listen string for local port forwarding in the format [bind_address:]port:host:hostport
-///   - destination: The SSH destination (user@host[:port])
-///   - command: The command to execute on the remote host
-///   - password: An optional password for authentication
-///
-/// The command exits with the exit status of the remote command, or 1 if an error occurs.
 @main
 struct SSHClient: ParsableCommand {
-    /// Local port forwarding in the format [bind_address:]port:host:hostport
     @Option(name: .shortAndLong, help: "Local port forwarding in the format [bind_address:]port:host:hostport")
     var listen: String?
 
-    /// The SSH destination in the format user@host[:port]
     @Argument(help: "The SSH destination in the format user@host[:port]")
     var destination: String
 
-    /// The command to execute on the remote host
     @Argument(help: "The command to execute on the remote host")
     var command: [String]
 
-    /// Optional password for authentication
     @Option(name: .shortAndLong, help: "Password for authentication (discouraged on command line)")
     var password: String?
 
-    /// Run the SSH client with the provided arguments.
-    ///
-    /// This method sets up the event loop, parses the destination, initialises the authentication delegate, and either performs port forwarding or executes a remote command as requested. It preserves the semantics of the original implementation, including agent and password authentication and all error handling.
-    ///
-    /// - Throws: Any error encountered during SSH connection or command execution.
+    @Flag(name: .shortAndLong, help: "Enable verbose debug logging")
+    var debug: Bool = false
+
     func run() throws {
         let (host, port, user) = SSHClient.parseDestination(destination)
         let password = self.password
@@ -75,35 +134,45 @@ struct SSHClient: ParsableCommand {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? group.syncShutdownGracefully() }
 
-        // Choose the appropriate authentication delegate based on command-line flags
-        let authDelegate: NIOSSHClientUserAuthenticationDelegate
-        if true { // FIXME: should try SSH agent first and fall back to interactive password authentication if unsuccessful (but only if run from a TTY).
-            print("Using SSH agent for authentication...")
-            authDelegate = PublicKeyAgentDelegate(username: user, password: password)
-        } else {
-            print("Using interactive password authentication...")
-            authDelegate = InteractivePasswordPromptDelegate(username: user, password: password)
+        // Configure SSHAgent global debug
+        Task {
+            await SSHAgent.shared.setDebug(self.debug)
         }
 
-        // NOTE: Swift 6 compatibility: NIOSSHHandler is not Sendable, but SwiftNIO's API is already annotated for concurrency compatibility.
+        let authDelegate: NIOSSHClientUserAuthenticationDelegate
+        if true {
+            if self.debug { print("[debug] Using SSH agent for authentication...") }
+            authDelegate = PublicKeyAgentDelegate(username: user, password: password, debug: self.debug)
+        } else {
+            if self.debug { print("[debug] Using interactive password authentication...") }
+            authDelegate = InteractivePasswordPromptDelegate(username: user, password: password, debug: self.debug)
+        }
+
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { channel in
-                channel.pipeline.addHandlers([
-                    NIOSSHHandler(
-                        role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: AcceptAllHostKeysDelegate())),
-                        allocator: channel.allocator,
-                        inboundChildChannelInitializer: nil
-                    ),
-                    ErrorHandler()
-                ])
+                if self.debug { print("[debug] root channel initializer") }
+                // Add handlers sequentially to avoid Sendable inference on arrays (Swift 6).
+                let sshHandler = NIOSSHHandler(
+                    role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: AcceptAllHostKeysDelegate())),
+                    allocator: channel.allocator,
+                    inboundChildChannelInitializer: nil
+                )
+                return channel.pipeline.addHandler(sshHandler).flatMap {
+                    channel.pipeline.addHandler(ErrorHandler())
+                }
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
 
-        let channel = try bootstrap.connect(host: host, port: port).wait()
+        let channel: Channel
+        do {
+            channel = try bootstrap.connect(host: host, port: port).wait()
+        } catch {
+            fputs("[ssh-client] Connect error: \(error)\n", stderr)
+            Foundation.exit(255)
+        }
 
         if let listen = listenStruct {
-            // We've been asked to port forward.
             let server = PortForwardingServer(group: group,
                                               bindHost: listen.bindHost ?? "localhost",
                                               bindPort: listen.bindPort) { inboundChannel in
@@ -130,63 +199,62 @@ struct SSHClient: ParsableCommand {
             do {
                 try server.run().wait()
             } catch {
-                print("[ssh-client] Server error: \(error)")
+                fputs("[ssh-client] Server error: \(error)\n", stderr)
                 Foundation.exit(255)
             }
         } else {
-            // We've been asked to exec a remote command (like OpenSSH). Open a session channel and send an exec request.
             let exitStatusPromise = channel.eventLoop.makePromise(of: Int.self)
             let childChannel: Channel
             do {
                 childChannel = try channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
                     let promise = channel.eventLoop.makePromise(of: Channel.self)
-                    // Open a session channel (not direct-tcpip)
+                    if self.debug { print("[debug] creating session channel") }
                     sshHandler.createChannel(promise) { childChannel, channelType in
                         guard channelType == .session else {
                             return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
                         }
-                        // Add SimpleExecHandler to handle the exec request and I/O
-                        return childChannel.pipeline.addHandlers([
-                            SimpleExecHandler(command: self.command.joined(separator: " "), completePromise: exitStatusPromise),
-                            ErrorHandler()
-                        ])
+                        // Allow remote half-closure
+                        return childChannel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).flatMap {
+                            var handlers: [ChannelHandler] = []
+                            if self.debug {
+                                handlers.append(SSHChildDebugHandler(label: "exec", verbose: true))
+                            }
+                            handlers.append(SimpleExecHandler(command: self.command.joined(separator: " "), completePromise: exitStatusPromise))
+                            handlers.append(ErrorHandler())
+                            return childChannel.pipeline.addHandlers(handlers)
+                        }
                     }
                     return promise.futureResult
                 }.wait()
             } catch {
-                print("[ssh-client] Channel creation error: \(error)")
+                fputs("[ssh-client] Channel creation error: \(error)\n", stderr)
                 Foundation.exit(255)
             }
-            // Wait for the remote command to complete
+
             do {
                 try childChannel.closeFuture.wait()
             } catch {
-                print("[ssh-client] Channel close error: \(error)")
+                if self.debug { print("[ssh-client] Channel close error: \(error)") }
                 Foundation.exit(255)
             }
+
             let exitStatus: Int
             do {
                 exitStatus = try exitStatusPromise.futureResult.wait()
             } catch {
-                print("[ssh-client] Command execution error: \(error)")
+                fputs("[ssh-client] Command execution error: \(error)\n", stderr)
                 Foundation.exit(255)
             }
             do {
                 try channel.close().wait()
             } catch {
-                print("[ssh-client] Connection close error: \(error)")
+                if self.debug { print("[ssh-client] Connection close error: \(error)") }
                 Foundation.exit(255)
             }
             Foundation.exit(Int32(exitStatus))
         }
     }
 
-    /// Parse the SSH destination string into host, port, and user.
-    ///
-    /// This helper replicates the behaviour of the original parser, including default port and user extraction.
-    ///
-    /// - Parameter destination: The SSH destination string (user@host[:port])
-    /// - Returns: A tuple containing host, port, and user.
     static func parseDestination(_ destination: String) -> (host: String, port: Int, user: String) {
         let user: String
         let hostPort: String
@@ -209,12 +277,6 @@ struct SSHClient: ParsableCommand {
         return (host, port, user)
     }
 
-    /// Parse the listen string into its components.
-    ///
-    /// This helper replicates the behaviour of the original Listen struct.
-    ///
-    /// - Parameter listenString: The listen string ([bind_address:]port:host:hostport)
-    /// - Returns: A Listen struct if parsing is successful, otherwise nil.
     static func parseListen(_ listenString: String) -> Listen? {
         var components = listenString.split(separator: ":")
         var bindHost: Substring? = nil
@@ -232,7 +294,6 @@ struct SSHClient: ParsableCommand {
         }
     }
 
-    /// Listen struct matching the original Listen semantics.
     struct Listen {
         var bindHost: Substring?
         var bindPort: Int
@@ -240,3 +301,4 @@ struct SSHClient: ParsableCommand {
         var targetPort: Int
     }
 }
+

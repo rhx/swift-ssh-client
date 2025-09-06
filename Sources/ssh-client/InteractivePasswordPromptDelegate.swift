@@ -21,6 +21,7 @@ import NIOSSH
 /// A client user auth delegate that provides an interactive prompt for password-based user auth.
 final class InteractivePasswordPromptDelegate: NIOSSHClientUserAuthenticationDelegate, Sendable {
     private let queue: DispatchQueue
+    private let debug: Bool
 
     private struct Credentials {
         var username: String?
@@ -29,9 +30,10 @@ final class InteractivePasswordPromptDelegate: NIOSSHClientUserAuthenticationDel
 
     private let credentials: NIOLockedValueBox<Credentials>
 
-    init(username: String?, password: String?) {
+    init(username: String?, password: String?, debug: Bool = false) {
         self.queue = DispatchQueue(label: "io.swiftnio.ssh.InteractivePasswordPromptDelegate")
         self.credentials = NIOLockedValueBox(Credentials(username: username, password: password))
+        self.debug = debug
     }
 
     func nextAuthenticationType(
@@ -39,7 +41,7 @@ final class InteractivePasswordPromptDelegate: NIOSSHClientUserAuthenticationDel
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
         guard availableMethods.contains(.password) else {
-            print("Error: password auth not supported")
+            fputs("[ssh-client] Password authentication not supported\n", stderr)
             nextChallengePromise.fail(SSHClientError.passwordAuthenticationNotSupported)
             return
         }
