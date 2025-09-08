@@ -1,6 +1,7 @@
 import XCTest
 import class Foundation.Bundle
 @testable import ssh_client
+@testable import SSHAgent
 import NIOSSH
 
 final class ssh_clientTests: XCTestCase {

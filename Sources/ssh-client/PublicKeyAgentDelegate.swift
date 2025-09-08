@@ -10,6 +10,7 @@ import Foundation
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOSSH
+import SSHAgent
 
 final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
     private let queue: DispatchQueue

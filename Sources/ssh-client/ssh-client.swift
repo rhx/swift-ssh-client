@@ -10,7 +10,7 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 import ArgumentParser
-import Foundation
+import SSHAgent
 
 final class ErrorHandler: ChannelInboundHandler {
     typealias InboundIn = Any
