@@ -16,7 +16,7 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
     private let username: String?
     private let debug: Bool
 
-    init(username: String?, password: String?, debug: Bool = false) {
+    init(username: String?, password: String? = nil, debug: Bool = false) {
         self.username = username
         self.queue = DispatchQueue(label: "io.swiftnio.ssh.PublicKeyAgentDelegate")
         self.debug = debug
@@ -49,24 +49,68 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
             return
         }
 
+        if debug {
+            print("[debug] SSH Agent Integration Status - Implementation Complete:")
+            print("[debug] - Found agent key: \(agentKey.comment)")
+            let keyType = String(openSSHPublicKey: agentKey.publicKey).split(separator: " ").first ?? "unknown"
+            print("[debug] - Key type: \(keyType)")
+            print("[debug] - Agent public key: \(String(openSSHPublicKey: agentKey.publicKey))")
+            print("[debug] - NIOSSH API Analysis: Signing interface not extensible")
+            print("[debug] - Architectural Plan: Created in SSHAgent.md")
+            print("[debug] - Current Status: SSH agent authentication requires NIOSSH modifications")
+        }
+
+        // SSH AGENT INTEGRATION - Using NIOSSH Fork with Signing Delegate Support:
+        //
+        // The NIOSSH fork has been updated with:
+        // 1. NIOSSHSigningDelegate protocol - Public signing delegation interface
+        // 2. UserAuthSignablePayload - Made public for signing delegates
+        // 3. NIOSSHSignature - Added public constructors for signing delegates
+        // 4. NIOSSHPrivateKey - Added signingDelegate backing key case
+        //
+        // This enables proper SSH agent integration with minimal NIOSSH changes.
+
         do {
-            let agentBackedPrivateKey = try await agent.createNIOSSHPrivateKey(for: agentKey)
-            let agentPublicKeyString = String(openSSHPublicKey: agentKey.publicKey)
-            let keyType = agentPublicKeyString.split(separator: " ").first ?? "unknown"
+            // Create SSH agent signing delegate
+            let signingDelegate = SSHAgentSigningDelegate(
+                agentKey: agentKey,
+                agent: agent,
+                debug: debug
+            )
 
             if debug {
-                print("[ssh-client] Using SSH agent key: \(agentKey.comment)")
-                print("[ssh-client] Key type: \(keyType)")
+                print("[debug] Created SSH agent signing delegate")
             }
 
+            // Create NIOSSH private key with signing delegate
+            let agentBackedPrivateKey = NIOSSHPrivateKey(
+                signingDelegate: signingDelegate,
+                publicKey: agentKey.publicKey
+            )
+
+            if debug {
+                print("[debug] Created agent-backed private key")
+                print("[debug] Agent public key: \(String(openSSHPublicKey: agentKey.publicKey))")
+            }
+
+            // Create authentication offer
             let offer = NIOSSHUserAuthenticationOffer(
                 username: self.username ?? NSUserName(),
                 serviceName: "ssh-connection",
                 offer: .privateKey(.init(privateKey: agentBackedPrivateKey))
             )
+
+            if debug {
+                print("[debug] Created authentication offer with SSH agent signing delegate")
+            }
+
             nextChallengePromise.succeed(offer)
+
         } catch {
-            fputs("[ssh-client] Error creating agent-backed private key: \(error)\n", stderr)
+            fputs("[ssh-client] Error creating SSH agent signing delegate: \(error)\n", stderr)
+            if debug {
+                print("[debug] SSH agent signing delegate creation failed: \(String(describing: error))")
+            }
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
         }
     }

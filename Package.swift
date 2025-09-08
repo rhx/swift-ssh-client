@@ -12,7 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.83.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.10.0"),
+        .package(path: "../swift-nio-ssh"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     ],
     targets: [

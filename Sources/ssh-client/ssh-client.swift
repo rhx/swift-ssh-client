@@ -139,14 +139,12 @@ struct SSHClient: ParsableCommand {
             await SSHAgent.shared.setDebug(self.debug)
         }
 
-        let authDelegate: NIOSSHClientUserAuthenticationDelegate
-        if true {
-            if self.debug { print("[debug] Using SSH agent for authentication...") }
-            authDelegate = PublicKeyAgentDelegate(username: user, password: password, debug: self.debug)
-        } else {
-            if self.debug { print("[debug] Using interactive password authentication...") }
-            authDelegate = InteractivePasswordPromptDelegate(username: user, password: password, debug: self.debug)
-        }
+        // Use composite authentication strategy: try SSH agent first, fall back to password
+        let authDelegate: NIOSSHClientUserAuthenticationDelegate = CompositeAuthDelegate(
+            username: user,
+            password: password,
+            debug: self.debug
+        )
 
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { channel in
@@ -204,8 +202,10 @@ struct SSHClient: ParsableCommand {
             }
         } else {
             let exitStatusPromise = channel.eventLoop.makePromise(of: Int.self)
+            if self.debug { print("[debug] starting SSH session channel creation") }
             let childChannel: Channel
             do {
+                if self.debug { print("[debug] getting SSH handler from pipeline") }
                 childChannel = try channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
                     let promise = channel.eventLoop.makePromise(of: Channel.self)
                     if self.debug { print("[debug] creating session channel") }
@@ -228,6 +228,9 @@ struct SSHClient: ParsableCommand {
                 }.wait()
             } catch {
                 fputs("[ssh-client] Channel creation error: \(error)\n", stderr)
+                if self.debug {
+                    fputs("[ssh-client] Channel creation error details: \(String(describing: error))\n", stderr)
+                }
                 Foundation.exit(255)
             }
 
