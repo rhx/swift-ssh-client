@@ -6,6 +6,7 @@
 //
 import Foundation
 import NIOCore
+import NIOPosix
 import NIOSSH
 import Crypto
 
@@ -44,7 +45,8 @@ public actor SSHAgent {
     /// manages its own connection lifecycle and protocol state.
     public static let shared = SSHAgent()
 
-    private var socket: UnixDomainSocket?
+    private var channel: Channel?
+    private var eventLoopGroup: EventLoopGroup?
     private var isConnected = false
     private var debug = false
 
@@ -74,14 +76,30 @@ public actor SSHAgent {
             return false
         }
 
-        let newSocket = UnixDomainSocket(path: socketPath)
-        guard await newSocket.connect() else {
-            return false
+        // Create event loop group if needed
+        if eventLoopGroup == nil {
+            eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         }
 
-        self.socket = newSocket
-        self.isConnected = true
-        return true
+        guard let group = eventLoopGroup else { return false }
+
+        let bootstrap = ClientBootstrap(group: group)
+            .channelInitializer { channel in
+                // No special channel setup needed for SSH agent communication
+                return channel.eventLoop.makeSucceededFuture(())
+            }
+
+        do {
+            let newChannel = try await bootstrap.connect(unixDomainSocketPath: socketPath).get()
+            self.channel = newChannel
+            self.isConnected = true
+            return true
+        } catch {
+            if debug {
+                print("[SSHAgent] Failed to connect to SSH agent at \(socketPath): \(error)")
+            }
+            return false
+        }
     }
 
     /// Sends a message to the SSH agent and receives the response.
@@ -93,34 +111,60 @@ public actor SSHAgent {
     /// - Parameter messageData: The binary message data to send
     /// - Returns: The response data from the agent, or `nil` if communication failed
     private func sendMessage(_ messageData: Data) async -> Data? {
-        guard await connect(), let socket = socket else {
+        guard await connect(), let channel = channel else {
             return nil
         }
 
-        // Prepare message with length prefix
-        var lengthData = Data(count: 4)
-        let length = UInt32(messageData.count).bigEndian
-        withUnsafeBytes(of: length) { bytes in
-            lengthData.replaceSubrange(0..<4, with: bytes)
-        }
+        return await withCheckedContinuation { continuation in
+            // Create a promise for the response
+            let promise = channel.eventLoop.makePromise(of: Data?.self)
 
-        // Send length prefix and message
-        guard await socket.send(lengthData),
-              await socket.send(messageData) else {
-            return nil
-        }
+            // Set up a temporary handler to capture the response
+            let responseHandler = SSHAgentResponseHandler(promise: promise, debug: debug)
 
-        // Read response length
-        guard let responseLengthData = await socket.receive(count: 4) else {
-            return nil
-        }
+            // Add the handler to the pipeline
+            channel.pipeline.addHandler(responseHandler).whenComplete { result in
+                switch result {
+                case .success:
+                    // Prepare message with length prefix
+                    var buffer = channel.allocator.buffer(capacity: 4 + messageData.count)
+                    let length = UInt32(messageData.count)
+                    buffer.writeInteger(length, endianness: .big)
+                    buffer.writeBytes(messageData)
 
-        let responseLength = responseLengthData.withUnsafeBytes {
-            $0.load(as: UInt32.self).bigEndian
-        }
+                    // Send the complete message
+                    channel.writeAndFlush(buffer).whenComplete { writeResult in
+                        if case .failure(let error) = writeResult {
+                            if self.debug {
+                                print("[SSHAgent] Write error: \(error)")
+                            }
+                            promise.succeed(nil)
+                        }
+                    }
+                case .failure(let error):
+                    if self.debug {
+                        print("[SSHAgent] Handler setup error: \(error)")
+                    }
+                    promise.succeed(nil)
+                }
+            }
 
-        // Read response data
-        return await socket.receive(count: Int(responseLength))
+            // Wait for the response and clean up
+            promise.futureResult.whenComplete { result in
+                // Remove the temporary handler
+                _ = channel.pipeline.removeHandler(responseHandler)
+
+                switch result {
+                case .success(let data):
+                    continuation.resume(returning: data)
+                case .failure(let error):
+                    if self.debug {
+                        print("[SSHAgent] Response error: \(error)")
+                    }
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
     }
 
     /// Requests the list of identities from the SSH agent.
@@ -396,10 +440,14 @@ public actor SSHAgent {
     /// longer needed, though the shared instance typically maintains its
     /// connection for the lifetime of the application.
     public func disconnect() async {
-        if let socket = socket {
-            await socket.disconnect()
+        if let channel = channel {
+            try? await channel.close()
         }
-        socket = nil
+        if let group = eventLoopGroup {
+            try? await group.shutdownGracefully()
+        }
+        channel = nil
+        eventLoopGroup = nil
         isConnected = false
     }
 
