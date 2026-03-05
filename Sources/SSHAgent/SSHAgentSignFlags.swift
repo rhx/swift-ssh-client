@@ -7,7 +7,7 @@
 import Foundation
 
 /// SSH Agent signing flags as defined in the OpenSSH protocol
-public struct SSHAgentSignFlags: OptionSet {
+public struct SSHAgentSignFlags: OptionSet, Sendable {
     public let rawValue: UInt32
 
     public init(rawValue: UInt32) {

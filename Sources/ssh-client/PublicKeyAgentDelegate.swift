@@ -12,7 +12,7 @@ import NIOCore
 import NIOSSH
 import SSHAgent
 
-final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
+final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     private let queue: DispatchQueue
     private let username: String?
     private let debug: Bool
@@ -73,12 +73,14 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
                 // Use a blocking wait to convert async to sync
                 // This is necessary to maintain compatibility with NIOSSH's sync API
                 let group = DispatchGroup()
-                var result: Result<NIOSSHSignature, Error>!
+                let resultBox = NIOLockedValueBox<Result<NIOSSHSignature, Error>?>(nil)
 
                 group.enter()
                 Task { [weak self] in
                     guard let self else {
-                        result = .failure(SSHAgentError.signingFailed("Authentication delegate was deallocated"))
+                        resultBox.withLockedValue { result in
+                            result = .failure(SSHAgentError.signingFailed("Authentication delegate was deallocated"))
+                        }
                         group.leave()
                         return
                     }
@@ -100,17 +102,24 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
 
                         // Convert agent signature to NIOSSH format
                         let signature = try self.convertAgentSignatureToNIOSSH(signatureData, agentKey: agentKey, debug: self.debug)
-                        result = .success(signature)
+                        resultBox.withLockedValue { result in
+                            result = .success(signature)
+                        }
                     } catch {
                         if self.debug {
                             print("[debug] Signing failed: \(error)")
                         }
-                        result = .failure(error)
+                        resultBox.withLockedValue { result in
+                            result = .failure(error)
+                        }
                     }
                     group.leave()
                 }
 
                 group.wait()
+                guard let result = resultBox.withLockedValue({ $0 }) else {
+                    throw SSHAgentError.signingFailed("SSH agent signing produced no result")
+                }
                 return try result.get()
             }
 

@@ -86,7 +86,7 @@ public class SSHAgentPrivateKey {
     /// - Parameter data: The data to be signed
     /// - Returns: A signature compatible with NIOSSH authentication
     /// - Throws: Various errors if signing fails or agent communication fails
-    public func sign<DataBytes: DataProtocol>(_ data: DataBytes) async throws -> Data {
+    public func sign<DataBytes: SendableData>(_ data: DataBytes) async throws -> Data {
         // Get the key type to determine the correct signature format
         let openSSHString = String(openSSHPublicKey: agentKey.publicKey)
         let components = openSSHString.split(separator: " ", maxSplits: 1)

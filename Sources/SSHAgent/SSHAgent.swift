@@ -336,7 +336,7 @@ public actor SSHAgent {
     /// - Parameter flags: Optional signing flags to specify algorithm preferences
     /// - Returns: The signature data returned by the SSH agent
     /// - Throws: `SSHAgentError` if the signing operation fails or communication with the agent fails
-    public func requestSignature<DataBytes: DataProtocol>(for data: DataBytes, usingKey key: SSHAgentKey, flags: SSHAgentSignFlags = []) async throws -> Data {
+    public func requestSignature<DataBytes: SendableData>(for data: DataBytes, usingKey key: SSHAgentKey, flags: SSHAgentSignFlags = []) async throws -> Data {
         guard await connect() else {
             throw SSHAgentError.agentNotAvailable("Unable to connect to SSH agent")
         }

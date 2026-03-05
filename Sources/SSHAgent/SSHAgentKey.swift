@@ -18,7 +18,7 @@ import NIOSSH
 /// whilst also providing convenient access to the parsed public key for use with
 /// the NIOSSH framework. Comments associated with keys in the agent are preserved
 /// to assist with key identification and debugging.
-public struct SSHAgentKey {
+public struct SSHAgentKey: Sendable {
     /// The raw key blob as returned by the SSH agent
     public let keyBlob: Data
     /// The parsed public key for use with NIOSSH
