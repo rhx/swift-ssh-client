@@ -12,7 +12,7 @@ import NIOCore
 import NIOSSH
 import SSHAgent
 
-final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
+final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     private let queue: DispatchQueue
     private let username: String?
     private let debug: Bool
@@ -28,7 +28,7 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
 
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods, nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
         guard availableMethods.contains(.publicKey) else {
-            fputs("[ssh-client] Public key authentication not supported\n", stderr)
+            if debug { print("[ssh-client] Public key authentication not supported") }
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
             return
         }
@@ -45,7 +45,7 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
         let preferredKeyTypes = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"]
 
         guard let agentKey = await agent.findKey(for: preferredKeyTypes) else {
-            fputs("[ssh-client] No suitable public key found in ssh-agent\n", stderr)
+            if debug { print("[ssh-client] No suitable public key found in ssh-agent") }
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
             return
         }
@@ -60,9 +60,6 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
             print("[debug] - Current status: user-authentication signatures are delegated to ssh-agent")
         }
 
-        // The ssh-agent branch of swift-nio-ssh exposes a signing callback API that
-        // lets the client delegate user-authentication signatures to ssh-agent.
-
         do {
             if debug {
                 print("[debug] Creating SSH agent signing callback")
@@ -71,14 +68,15 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
             // Create NIOSSH private key with signing callback that bridges async to sync
             let agentBackedPrivateKey = NIOSSHPrivateKey(publicKey: agentKey.publicKey) { payload in
                 // Use a blocking wait to convert async to sync
-                // This is necessary to maintain compatibility with NIOSSH's sync API
                 let group = DispatchGroup()
-                var result: Result<NIOSSHSignature, Error>!
+                let resultBox = NIOLockedValueBox<Result<NIOSSHSignature, Error>?>(nil)
 
                 group.enter()
                 Task { [weak self] in
                     guard let self else {
-                        result = .failure(SSHAgentError.signingFailed("Authentication delegate was deallocated"))
+                        resultBox.withLockedValue { result in
+                            result = .failure(SSHAgentError.signingFailed("Authentication delegate was deallocated"))
+                        }
                         group.leave()
                         return
                     }
@@ -100,17 +98,24 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate {
 
                         // Convert agent signature to NIOSSH format
                         let signature = try self.convertAgentSignatureToNIOSSH(signatureData, agentKey: agentKey, debug: self.debug)
-                        result = .success(signature)
+                        resultBox.withLockedValue { result in
+                            result = .success(signature)
+                        }
                     } catch {
                         if self.debug {
                             print("[debug] Signing failed: \(error)")
                         }
-                        result = .failure(error)
+                        resultBox.withLockedValue { result in
+                            result = .failure(error)
+                        }
                     }
                     group.leave()
                 }
 
                 group.wait()
+                guard let result = resultBox.withLockedValue({ $0 }) else {
+                    throw SSHAgentError.signingFailed("SSH agent signing produced no result")
+                }
                 return try result.get()
             }
 

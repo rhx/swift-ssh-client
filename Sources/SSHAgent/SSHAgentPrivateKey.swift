@@ -1,7 +1,7 @@
 //
 //  SSHAgentPrivateKey.swift
 //
-//  Copyright © 2022, 2025 Rene Hexel. All rights reserved.
+//  Copyright © 2022, 2025, 2026 Rene Hexel. All rights reserved.
 //  Created by Rene Hexel on 12/5/2022.
 //
 import Foundation
