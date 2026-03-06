@@ -18,6 +18,7 @@ The project is structured into three main components:
 ## What does ssh-client support?
 
 - **Command Execution**: Execute remote commands and capture stdout, stderr, and exit status.
+- **Interactive Shells**: Open a remote login shell with a pseudo-terminal when no command is supplied.
 - **Direct Port Forwarding**: Support for local port forwarding (Direct TCP/IP) to tunnel traffic through SSH.
 - **SSH Agent Integration**: Automatic discovery and use of keys from local SSH agents via `SSH_AUTH_SOCK`.
 - **Key Support**: Support for Ed25519, RSA, and ECDSA (P-256/384/521) keys.
@@ -57,6 +58,11 @@ let result = try await client.executeCommand("ls -la /tmp")
 print("Exit status: \(result.exitStatus)")
 print("Standard Output: \(String(data: result.output, encoding: .utf8) ?? "")")
 ```
+
+### Interactive Shells
+
+If you omit the remote command, `ssh-client` opens an interactive shell session
+and requests a pseudo-terminal, similar to the standard `ssh` command-line tool.
 
 ### Direct Port Forwarding
 You can establish local port forwarding to a remote target through the SSH tunnel.
@@ -98,6 +104,9 @@ The package includes a CLI tool as an example that mirrors common `ssh` command
 functionality:
 
 ```bash
+# Open an interactive shell
+swift run ssh-client user@example.com
+
 # Execute a remote command
 swift run ssh-client user@example.com "cat /etc/os-release"
 

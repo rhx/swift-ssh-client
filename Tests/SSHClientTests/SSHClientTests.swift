@@ -32,4 +32,30 @@ final class SSHClientTests: XCTestCase {
         XCTAssertEqual(try outputPromise.futureResult.wait(), Data("Linux test output\n".utf8))
         XCTAssertEqual(try errorOutputPromise.futureResult.wait(), Data())
     }
+
+    func testInteractiveShellHandlerCompletesOnChannelInactiveAfterExitStatus() throws {
+        let channel = EmbeddedChannel()
+        let exitStatusPromise = channel.eventLoop.makePromise(of: Int.self)
+        let pseudoTerminalRequest = SSHChannelRequestEvent.PseudoTerminalRequest(
+            wantReply: true,
+            term: "xterm-256color",
+            terminalCharacterWidth: 80,
+            terminalRowHeight: 24,
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0,
+            terminalModes: .init([:])
+        )
+
+        try channel.pipeline.addHandler(
+            InteractiveShellHandler(
+                pseudoTerminalRequest: pseudoTerminalRequest,
+                completePromise: exitStatusPromise
+            )
+        ).wait()
+
+        channel.pipeline.fireUserInboundEventTriggered(SSHChannelRequestEvent.ExitStatus(exitStatus: 0))
+        try channel.close().wait()
+
+        XCTAssertEqual(try exitStatusPromise.futureResult.wait(), 0)
+    }
 }

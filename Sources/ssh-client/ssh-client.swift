@@ -20,8 +20,8 @@ struct SSHClientCommand: AsyncParsableCommand {
     @Argument(help: "The SSH destination in the format user@host[:port]")
     var destination: String
 
-    @Argument(help: "The command to execute on the remote host")
-    var command: [String]
+    @Argument(help: "The command to execute on the remote host. Omit to start an interactive shell.")
+    var command: [String] = []
 
     @Option(name: .shortAndLong, help: "Password for authentication (discouraged on command line)")
     var password: String?
@@ -55,13 +55,27 @@ struct SSHClientCommand: AsyncParsableCommand {
                 writeStandardErrorLine("[ssh-client] Port forwarding error: \(error)")
                 Foundation.exit(255)
             }
-        } else {
-            // Command execution mode
-            guard !command.isEmpty else {
-                writeStandardErrorLine("[ssh-client] No command provided")
+        } else if command.isEmpty {
+            do {
+                let terminal = LocalTerminalConfiguration.current()
+                let terminalMode = try LocalTerminalMode()
+                defer { terminalMode.restore() }
+
+                let exitStatus = try await client.startInteractiveShell(
+                    term: terminal.term,
+                    terminalCharacterWidth: terminal.columns,
+                    terminalRowHeight: terminal.rows
+                )
+                Foundation.exit(Int32(exitStatus))
+            } catch {
+                writeStandardErrorLine("[ssh-client] Interactive shell error: \(error)")
+                if debug {
+                    writeStandardErrorLine("[ssh-client] Error details: \(String(describing: error))")
+                }
                 Foundation.exit(255)
             }
-            
+        } else {
+            // Command execution mode
             do {
                 let result = try await client.executeCommand(command.joined(separator: " "))
                 

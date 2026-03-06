@@ -207,6 +207,56 @@ public actor SSHClient {
         
         return CommandResult(exitStatus: exitStatus, output: output, errorOutput: errorOutput)
     }
+
+    /// Start an interactive shell on the remote server using a pseudo-terminal.
+    @discardableResult
+    public func startInteractiveShell(
+        term: String,
+        terminalCharacterWidth: Int,
+        terminalRowHeight: Int,
+        terminalPixelWidth: Int = 0,
+        terminalPixelHeight: Int = 0,
+        terminalModes: SSHTerminalModes = .init([:])
+    ) async throws -> Int {
+        try await connect()
+        guard let connection = connection else {
+            throw SSHClientError.connectionNotEstablished
+        }
+
+        let exitStatusPromise = connection.eventLoop.makePromise(of: Int.self)
+        let pseudoTerminalRequest = SSHChannelRequestEvent.PseudoTerminalRequest(
+            wantReply: true,
+            term: term,
+            terminalCharacterWidth: terminalCharacterWidth,
+            terminalRowHeight: terminalRowHeight,
+            terminalPixelWidth: terminalPixelWidth,
+            terminalPixelHeight: terminalPixelHeight,
+            terminalModes: terminalModes
+        )
+
+        let childChannel = try await connection.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
+            let promise = connection.eventLoop.makePromise(of: Channel.self)
+            sshHandler.createChannel(promise) { childChannel, channelType in
+                guard channelType == .session else {
+                    return connection.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
+                }
+
+                return childChannel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).flatMap {
+                    childChannel.pipeline.addHandlers([
+                        InteractiveShellHandler(
+                            pseudoTerminalRequest: pseudoTerminalRequest,
+                            completePromise: exitStatusPromise
+                        ),
+                        ErrorHandler(),
+                    ])
+                }
+            }
+            return promise.futureResult
+        }.get()
+
+        try await childChannel.closeFuture.get()
+        return try await exitStatusPromise.futureResult.get()
+    }
     
     /// Start port forwarding
     public func startPortForwarding(_ config: PortForwardingConfiguration) async throws -> PortForwardingServer {
