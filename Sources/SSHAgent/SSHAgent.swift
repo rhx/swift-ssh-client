@@ -6,6 +6,7 @@
 //
 import Foundation
 import NIOCore
+import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSH
 import Crypto
@@ -451,117 +452,51 @@ public actor SSHAgent {
         isConnected = false
     }
 
-    /// Creates a NIOSSH-compatible private key that properly represents the SSH agent key.
+    /// Creates an SSH agent-backed NIOSSH private key.
     ///
-    /// This method creates a private key that contains the actual public key material from the SSH agent,
-    /// ensuring that authentication will succeed. Since NIOSSH requires actual private key material,
-    /// and we cannot extract it from the SSH agent, this method creates a placeholder private key
-    /// structure that is compatible with NIOSSH's signing interface.
-    ///
-    /// ## Current Limitation
-    ///
-    /// Due to NIOSSH's architecture, we cannot directly integrate SSH agent signing.
-    /// This method creates a temporary key for testing purposes. A proper solution would require
-    /// extending NIOSSH with a signing protocol as outlined in SSHAgent.md.
+    /// The returned key preserves the agent's public key and delegates each user-authentication
+    /// signature request back to the SSH agent. Private key material therefore remains inside
+    /// the agent rather than being copied into the client process.
     ///
     /// - Parameter agentKey: The SSH agent key to create a private key for
     /// - Returns: A NIOSSH-compatible private key
-    /// - Throws: `SSHAgentError` if the key type is not supported
+    /// - Throws: `SSHAgentError` if signing fails or the agent returns an invalid signature
     public func createNIOSSHPrivateKey(for agentKey: SSHAgentKey) async throws -> NIOSSHPrivateKey {
-        // Get the key type from the OpenSSH public key string
-        let openSSHString = String(openSSHPublicKey: agentKey.publicKey)
-        let components = openSSHString.split(separator: " ", maxSplits: 2)
-        guard let algorithmName = components.first else {
-            throw SSHAgentError.keyParsingFailed("Unable to determine key algorithm")
-        }
+        let debug = self.debug
+        let agent = self
 
-        let keyType = String(algorithmName)
+        return NIOSSHPrivateKey(publicKey: agentKey.publicKey) { payload in
+            let group = DispatchGroup()
+            let result = NIOLockedValueBox<Result<NIOSSHSignature, Error>?>(nil)
 
-        switch keyType {
-        case "ssh-ed25519":
-            // Extract the public key bytes from the SSH agent key
-            guard let publicKeyData = try? extractEd25519PublicKey(from: agentKey.publicKey) else {
-                throw SSHAgentError.keyParsingFailed("Unable to extract Ed25519 public key data")
+            group.enter()
+            Task {
+                do {
+                    let flags = SSHAgentSignature.preferredSigningFlags(for: agentKey.publicKey)
+                    let signatureData = try await agent.requestSignature(
+                        for: Data(payload),
+                        usingKey: agentKey,
+                        flags: flags
+                    )
+                    let signature = try SSHAgentSignature.convertToNIOSSH(
+                        signatureData,
+                        for: agentKey.publicKey,
+                        debug: debug
+                    )
+                    result.withLockedValue { $0 = .success(signature) }
+                } catch {
+                    result.withLockedValue { $0 = .failure(error) }
+                }
+                group.leave()
             }
 
-            // Create a private key that will generate the correct public key
-            // This is a workaround - ideally we'd have agent integration here
-            return try createEd25519KeyFromPublicKey(publicKeyData)
+            group.wait()
 
-        case "ecdsa-sha2-nistp256":
-            // For ECDSA keys, create a compatible key
-            // This is a temporary solution until proper agent integration
-            let tempKey = P256.Signing.PrivateKey()
-            return NIOSSHPrivateKey(p256Key: tempKey)
+            guard let resolved = result.withLockedValue({ $0 }) else {
+                throw SSHAgentError.signingFailed("SSH agent signing produced no result")
+            }
 
-        case "ecdsa-sha2-nistp384":
-            let tempKey = P384.Signing.PrivateKey()
-            return NIOSSHPrivateKey(p384Key: tempKey)
-
-        case "ecdsa-sha2-nistp521":
-            let tempKey = P521.Signing.PrivateKey()
-            return NIOSSHPrivateKey(p521Key: tempKey)
-
-        case "ssh-rsa":
-            // RSA is not directly supported by NIOSSH, use fallback
-            let tempKey = P256.Signing.PrivateKey()
-            return NIOSSHPrivateKey(p256Key: tempKey)
-
-        default:
-            throw SSHAgentError.keyParsingFailed("Unsupported key type: \(keyType)")
+            return try resolved.get()
         }
-    }
-
-    /// Extracts Ed25519 public key bytes from an SSH agent key
-    private func extractEd25519PublicKey(from sshKey: NIOSSHPublicKey) throws -> Data {
-        let openSSHString = String(openSSHPublicKey: sshKey)
-        let components = openSSHString.split(separator: " ")
-        guard components.count >= 2 else {
-            throw SSHAgentError.keyParsingFailed("Invalid SSH key format")
-        }
-
-        let base64Data = String(components[1])
-        guard let keyData = Data(base64Encoded: base64Data) else {
-            throw SSHAgentError.keyParsingFailed("Invalid base64 key data")
-        }
-
-        // Parse the SSH key blob to extract the actual Ed25519 public key
-        var offset = 0
-
-        // Skip algorithm name string
-        guard offset + 4 <= keyData.count else {
-            throw SSHAgentError.keyParsingFailed("Key data too short")
-        }
-        let nameLength = keyData.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
-            $0.load(as: UInt32.self).bigEndian
-        }
-        offset += 4 + Int(nameLength)
-
-        // Read public key length
-        guard offset + 4 <= keyData.count else {
-            throw SSHAgentError.keyParsingFailed("Key data too short for public key length")
-        }
-        let pubkeyLength = keyData.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
-            $0.load(as: UInt32.self).bigEndian
-        }
-        offset += 4
-
-        // Read public key data
-        guard offset + Int(pubkeyLength) <= keyData.count else {
-            throw SSHAgentError.keyParsingFailed("Key data too short for public key")
-        }
-
-        return keyData.subdata(in: offset..<(offset + Int(pubkeyLength)))
-    }
-
-    /// Creates an Ed25519 private key that will generate the specified public key
-    /// This is a temporary workaround - in a real implementation, this would be impossible
-    /// as we don't have the private key material
-    private func createEd25519KeyFromPublicKey(_ publicKeyData: Data) throws -> NIOSSHPrivateKey {
-        // This is the fundamental problem: we can't create a private key from just public key material
-        // For now, create a random key as a placeholder
-        // TODO: Implement proper SSH agent integration as per SSHAgent.md architecture
-        let tempKey = Curve25519.Signing.PrivateKey()
-        return NIOSSHPrivateKey(ed25519Key: tempKey)
     }
 }
