@@ -44,7 +44,7 @@ struct SSHClientCommand: AsyncParsableCommand {
         if let listenString = listen {
             // Port forwarding mode
             guard let forwardingConfig = PortForwardingConfiguration.parseListen(listenString) else {
-                fputs("[ssh-client] Invalid listen format: \(listenString)\n", stderr)
+                writeStandardErrorLine("[ssh-client] Invalid listen format: \(listenString)")
                 Foundation.exit(255)
             }
             
@@ -52,13 +52,13 @@ struct SSHClientCommand: AsyncParsableCommand {
                 let server = try await client.startPortForwarding(forwardingConfig)
                 try await server.run().get()
             } catch {
-                fputs("[ssh-client] Port forwarding error: \(error)\n", stderr)
+                writeStandardErrorLine("[ssh-client] Port forwarding error: \(error)")
                 Foundation.exit(255)
             }
         } else {
             // Command execution mode
             guard !command.isEmpty else {
-                fputs("[ssh-client] No command provided\n", stderr)
+                writeStandardErrorLine("[ssh-client] No command provided")
                 Foundation.exit(255)
             }
             
@@ -72,12 +72,12 @@ struct SSHClientCommand: AsyncParsableCommand {
                 if !result.errorOutput.isEmpty {
                     FileHandle.standardError.write(result.errorOutput)
                 }
-                
+
                 Foundation.exit(Int32(result.exitStatus))
             } catch {
-                fputs("[ssh-client] Command execution error: \(error)\n", stderr)
+                writeStandardErrorLine("[ssh-client] Command execution error: \(error)")
                 if debug {
-                    fputs("[ssh-client] Error details: \(String(describing: error))\n", stderr)
+                    writeStandardErrorLine("[ssh-client] Error details: \(String(describing: error))")
                 }
                 Foundation.exit(255)
             }

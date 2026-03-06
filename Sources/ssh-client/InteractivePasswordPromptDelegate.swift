@@ -41,7 +41,7 @@ final class InteractivePasswordPromptDelegate: NIOSSHClientUserAuthenticationDel
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
         guard availableMethods.contains(.password) else {
-            fputs("[ssh-client] Password authentication not supported\n", stderr)
+            writeStandardErrorLine("[ssh-client] Password authentication not supported")
             nextChallengePromise.fail(SSHClientError.passwordAuthenticationNotSupported)
             return
         }

@@ -28,7 +28,7 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate, @unc
 
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods, nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
         guard availableMethods.contains(.publicKey) else {
-            fputs("[ssh-client] Public key authentication not supported\n", stderr)
+            writeStandardErrorLine("[ssh-client] Public key authentication not supported")
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
             return
         }
@@ -45,7 +45,7 @@ final class PublicKeyAgentDelegate: NIOSSHClientUserAuthenticationDelegate, @unc
         let preferredKeyTypes = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"]
 
         guard let agentKey = await agent.findKey(for: preferredKeyTypes) else {
-            fputs("[ssh-client] No suitable public key found in ssh-agent\n", stderr)
+            writeStandardErrorLine("[ssh-client] No suitable public key found in ssh-agent")
             nextChallengePromise.fail(SSHClientError.publicKeyAuthenticationNotSupported)
             return
         }
