@@ -19,7 +19,7 @@ final class BufferingExecHandler: ChannelDuplexHandler {
     private var outputPromise: EventLoopPromise<Data>?
     private var errorOutputPromise: EventLoopPromise<Data>?
     private var execAcknowledged = false
-    private var exitStatusDelivered = false
+    private var exitStatus: Int?
     private var output = Data()
     private var errorOutput = Data()
 
@@ -76,34 +76,53 @@ final class BufferingExecHandler: ChannelDuplexHandler {
 
         case is ChannelFailureEvent:
             // Exec request was rejected; close and fail.
-            completePromises(exitStatus: -1, error: SSHClientError.commandExecFailed)
+            completePromises(exitStatus: nil, error: SSHClientError.commandExecFailed)
             context.close(promise: nil)
 
         case let exit as SSHChannelRequestEvent.ExitStatus:
-            exitStatusDelivered = true
-            completePromises(exitStatus: exit.exitStatus, error: nil)
-            // Server may keep channel open for a moment; we can close our side.
-            context.close(promise: nil)
+            exitStatus = exit.exitStatus
 
         default:
             context.fireUserInboundEventTriggered(event)
         }
     }
 
+    func channelInactive(context: ChannelHandlerContext) {
+        completeIfPossible()
+        context.fireChannelInactive()
+    }
+
     func handlerRemoved(context: ChannelHandlerContext) {
         // If we never completed, fail the promise to unblock waiters.
         if completePromise != nil {
-            completePromises(exitStatus: -1, error: SSHClientError.commandExecFailed)
+            if let exitStatus {
+                completePromises(exitStatus: exitStatus, error: nil)
+            } else {
+                completePromises(exitStatus: nil, error: SSHClientError.commandExecFailed)
+            }
         }
     }
     
-    private func completePromises(exitStatus: Int, error: Error?) {
+    private func completeIfPossible() {
+        guard completePromise != nil else {
+            return
+        }
+
+        guard let exitStatus else {
+            completePromises(exitStatus: nil, error: SSHClientError.commandExecFailed)
+            return
+        }
+
+        completePromises(exitStatus: exitStatus, error: nil)
+    }
+
+    private func completePromises(exitStatus: Int?, error: Error?) {
         if let promise = completePromise {
             completePromise = nil
             if let error = error {
                 promise.fail(error)
             } else {
-                promise.succeed(exitStatus)
+                promise.succeed(exitStatus ?? -1)
             }
         }
         

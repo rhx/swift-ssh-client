@@ -45,7 +45,23 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "SSHAgentTests",
+            dependencies: [
+                "SSHAgent",
+            ]
+        ),
+        .testTarget(
+            name: "SSHClientTests",
+            dependencies: [
+                "SSHClient",
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+            ]
+        ),
+        .testTarget(
             name: "ssh-clientTests",
-            dependencies: ["ssh-client"]),
+            dependencies: [
+                "ssh-client",
+            ]
+        ),
     ]
 )
