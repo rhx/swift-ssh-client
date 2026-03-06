@@ -66,6 +66,8 @@ and requests a pseudo-terminal, similar to the standard `ssh` command-line tool.
 
 ### Direct Port Forwarding
 You can establish local port forwarding to a remote target through the SSH tunnel.
+Forwarding can run alongside either a remote command or the default interactive
+shell session, and you can start more than one local forward at a time.
 
 ```swift
 let forwardingConfig = PortForwardingConfiguration(
@@ -76,8 +78,10 @@ let forwardingConfig = PortForwardingConfiguration(
 )
 
 let server = try await client.startPortForwarding(forwardingConfig)
-// This will start the local server and begin forwarding connections
-try await server.run().get()
+// Start the local listener, then keep the SSH session alive however you need.
+try await server.start().get()
+let result = try await client.executeCommand("uname -a")
+print("Exit status: \(result.exitStatus)")
 ```
 
 ### Channel Events
@@ -110,6 +114,9 @@ swift run ssh-client user@example.com
 # Execute a remote command
 swift run ssh-client user@example.com "cat /etc/os-release"
 
-# Establish local port forwarding
-swift run ssh-client -L 8080:localhost:80 user@example.com "sleep 3600"
+# Establish local port forwarding and open an interactive shell
+swift run ssh-client -L 8080:localhost:80 user@example.com
+
+# Establish multiple local forwards and run a remote command
+swift run ssh-client -L 8080:localhost:80 -L 5432:db.internal:5432 user@example.com uname -a
 ```

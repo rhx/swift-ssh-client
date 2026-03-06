@@ -12,11 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 import NIOCore
+import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSH
 
 public final class PortForwardingServer: Sendable {
-    private let serverChannel: NIOLoopBoundBox<Channel?>
+    private let serverChannel: NIOLockedValueBox<Channel?>
     private let serverLoop: EventLoop
     private let group: EventLoopGroup
     private let bindHost: Substring
@@ -31,27 +32,39 @@ public final class PortForwardingServer: Sendable {
         _ forwardingChannelConstructor: @escaping @Sendable (Channel) -> EventLoopFuture<Void>
     ) {
         self.serverLoop = group.next()
-        self.serverChannel = NIOLoopBoundBox(nil, eventLoop: self.serverLoop)
+        self.serverChannel = NIOLockedValueBox(nil)
         self.group = group
         self.forwardingChannelConstructor = forwardingChannelConstructor
         self.bindHost = bindHost
         self.bindPort = bindPort
     }
 
-    public func run() -> EventLoopFuture<Void> {
+    public func start() -> EventLoopFuture<Void> {
         ServerBootstrap(group: self.serverLoop, childGroup: self.group)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer(self.forwardingChannelConstructor)
-            .bind(host: String(self.bindHost), port: self.bindPort)
-            .flatMap {
-                self.serverChannel.value = $0
-                return $0.closeFuture
+            .bind(host: String(self.bindHost), port: self.bindPort).map { channel in
+                self.serverChannel.withLockedValue { storedChannel in
+                    storedChannel = channel
+                }
             }
+    }
+
+    public func run() -> EventLoopFuture<Void> {
+        self.start().flatMap {
+            self.serverLoop.flatSubmit {
+                guard let server = self.serverChannel.withLockedValue({ $0 }) else {
+                    return self.serverLoop.makeFailedFuture(SSHClientError.connectionNotEstablished)
+                }
+
+                return server.closeFuture
+            }
+        }
     }
 
     public func close() -> EventLoopFuture<Void> {
         self.serverLoop.flatSubmit {
-            guard let server = self.serverChannel.value else {
+            guard let server = self.serverChannel.withLockedValue({ $0 }) else {
                 // The server wasn't created yet, so we can just shut down straight away and let
                 // the OS clean us up.
                 return self.serverLoop.makeSucceededFuture(())
