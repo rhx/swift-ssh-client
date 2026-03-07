@@ -5,6 +5,7 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Ensure GitHub Pages is enabled for this repository and set to deploy from GitHub Actions.
 permissions:
   contents: read
   pages: write
@@ -30,17 +31,15 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      - name: Build docc-static
+        run: swift build -c release --product docc-static
+
       - name: Generate documentation
         run: |
-          swift package \
-            --allow-writing-to-directory .build/documentation \
-            generate-documentation \
-            --target SSHAgent \
-            --target SSHClient \
-            --disable-indexing \
-            --transform-for-static-hosting \
-            --hosting-base-path swift-ssh-client \
-            --output-path .build/documentation
+          .build/release/docc-static generate \
+            --package-path . \
+            --output .build/documentation \
+            --verbose
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
