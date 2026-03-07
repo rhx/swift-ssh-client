@@ -75,7 +75,11 @@ public final class PortForwardingServer: Sendable {
     }
 }
 
-/// A simple handler that wraps data into SSHChannelData for forwarding.
+/// Channel handler that wraps forwarded bytes in `SSHChannelData`.
+///
+/// `SSHWrapperHandler` adapts raw `ByteBuffer` traffic from the local forwarding
+/// side into the SSH channel payloads expected by `NIOSSH`, and performs the
+/// inverse conversion for inbound data.
 public final class SSHWrapperHandler: ChannelDuplexHandler, @unchecked Sendable {
     public typealias InboundIn = SSHChannelData
     public typealias InboundOut = ByteBuffer

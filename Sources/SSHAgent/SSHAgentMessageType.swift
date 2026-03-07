@@ -6,7 +6,11 @@
 //
 import Foundation
 
-/// SSH Agent protocol message types as defined in OpenSSH
+/// SSH agent protocol message identifiers used on the wire.
+///
+/// The cases map directly to the numeric message tags defined by the OpenSSH
+/// agent protocol. They are used when encoding requests and validating replies
+/// received from the local SSH agent socket.
 public enum SSHAgentMessageType: UInt8 {
     case requestIdentities = 11
     case identitiesAnswer = 12
