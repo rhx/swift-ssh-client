@@ -20,6 +20,45 @@ final class ssh_clientTests: XCTestCase {
         )
     }
 
+    func testLocalTerminalModeRestoreUsesBackupDescriptors() {
+        var setAttributesCalls: [(Int32, Int32)] = []
+        var setFlagsCalls: [(Int32, Int32, Int32)] = []
+        var closeCalls: [Int32] = []
+
+        let mode = LocalTerminalMode(
+            restoreInputFileDescriptor: 41,
+            restoreOutputFileDescriptor: 42,
+            inputFlags: 0x101,
+            outputFlags: 0x202,
+            setAttributes: { fileDescriptor, action, attributes in
+                _ = attributes.pointee
+                setAttributesCalls.append((fileDescriptor, action))
+                return 0
+            },
+            setFlags: { fileDescriptor, command, flags in
+                setFlagsCalls.append((fileDescriptor, command, flags))
+                return 0
+            },
+            closeDescriptor: { fileDescriptor in
+                closeCalls.append(fileDescriptor)
+                return 0
+            }
+        )
+
+        mode.restore()
+
+        XCTAssertEqual(setAttributesCalls.map(\.0), [41])
+        XCTAssertEqual(setAttributesCalls.map(\.1), [TCSANOW])
+        XCTAssertEqual(setFlagsCalls.count, 2)
+        XCTAssertEqual(setFlagsCalls[0].0, 41)
+        XCTAssertEqual(setFlagsCalls[0].1, F_SETFL)
+        XCTAssertEqual(setFlagsCalls[0].2, 0x101)
+        XCTAssertEqual(setFlagsCalls[1].0, 42)
+        XCTAssertEqual(setFlagsCalls[1].1, F_SETFL)
+        XCTAssertEqual(setFlagsCalls[1].2, 0x202)
+        XCTAssertEqual(closeCalls, [41, 42])
+    }
+
     func testCommandParsesWithoutRemoteCommand() throws {
         let command = try SSHClientCommand.parseAsRoot(["example.com"]) as? SSHClientCommand
 

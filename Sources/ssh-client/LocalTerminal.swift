@@ -34,23 +34,58 @@ struct LocalTerminalConfiguration {
 }
 
 struct LocalTerminalMode {
+    typealias SetAttributes = (Int32, Int32, UnsafeMutablePointer<termios>) -> Int32
+    typealias SetFlags = (Int32, Int32, Int32) -> Int32
+    typealias CloseDescriptor = (Int32) -> Int32
+
     private let originalAttributes: termios
-    private let enabled: Bool
+    private let restoreInputFileDescriptor: Int32?
+    private let restoreOutputFileDescriptor: Int32?
+    private let inputFlags: Int32?
+    private let outputFlags: Int32?
+    private let setAttributes: SetAttributes
+    private let setFlags: SetFlags
+    private let closeDescriptor: CloseDescriptor
 
     init() throws {
         guard isatty(STDIN_FILENO) == 1 else {
             self.originalAttributes = termios()
-            self.enabled = false
+            self.restoreInputFileDescriptor = nil
+            self.restoreOutputFileDescriptor = nil
+            self.inputFlags = nil
+            self.outputFlags = nil
+            self.setAttributes = Self.liveSetAttributes
+            self.setFlags = Self.liveSetFlags
+            self.closeDescriptor = Self.liveClose
             return
         }
 
+        let restoreInputFileDescriptor = dup(STDIN_FILENO)
+        guard restoreInputFileDescriptor >= 0 else {
+            throw POSIXError(.EBADF)
+        }
+
+        let restoreOutputFileDescriptor = dup(STDOUT_FILENO)
+        guard restoreOutputFileDescriptor >= 0 else {
+            _ = close(restoreInputFileDescriptor)
+            throw POSIXError(.EBADF)
+        }
+
         var attributes = termios()
-        guard tcgetattr(STDIN_FILENO, &attributes) == 0 else {
+        guard tcgetattr(restoreInputFileDescriptor, &attributes) == 0 else {
+            _ = close(restoreInputFileDescriptor)
+            _ = close(restoreOutputFileDescriptor)
             throw POSIXError(.ENOTTY)
         }
 
         self.originalAttributes = attributes
-        self.enabled = true
+        self.restoreInputFileDescriptor = restoreInputFileDescriptor
+        self.restoreOutputFileDescriptor = restoreOutputFileDescriptor
+        self.inputFlags = Self.currentFlags(for: restoreInputFileDescriptor)
+        self.outputFlags = Self.currentFlags(for: restoreOutputFileDescriptor)
+        self.setAttributes = Self.liveSetAttributes
+        self.setFlags = Self.liveSetFlags
+        self.closeDescriptor = Self.liveClose
 
         var rawAttributes = attributes
         #if canImport(Darwin)
@@ -65,11 +100,71 @@ struct LocalTerminalMode {
         }
     }
 
+    init(
+        originalAttributes: termios = termios(),
+        restoreInputFileDescriptor: Int32?,
+        restoreOutputFileDescriptor: Int32?,
+        inputFlags: Int32?,
+        outputFlags: Int32?,
+        setAttributes: @escaping SetAttributes,
+        setFlags: @escaping SetFlags,
+        closeDescriptor: @escaping CloseDescriptor
+    ) {
+        self.originalAttributes = originalAttributes
+        self.restoreInputFileDescriptor = restoreInputFileDescriptor
+        self.restoreOutputFileDescriptor = restoreOutputFileDescriptor
+        self.inputFlags = inputFlags
+        self.outputFlags = outputFlags
+        self.setAttributes = setAttributes
+        self.setFlags = setFlags
+        self.closeDescriptor = closeDescriptor
+    }
+
     func restore() {
-        guard enabled else {
+        guard let restoreInputFileDescriptor, let restoreOutputFileDescriptor else {
             return
         }
         var attributes = originalAttributes
-        _ = tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
+        _ = setAttributes(restoreInputFileDescriptor, TCSANOW, &attributes)
+        Self.restore(flags: inputFlags, for: restoreInputFileDescriptor, setFlags: setFlags)
+        Self.restore(flags: outputFlags, for: restoreOutputFileDescriptor, setFlags: setFlags)
+        _ = closeDescriptor(restoreInputFileDescriptor)
+        _ = closeDescriptor(restoreOutputFileDescriptor)
+    }
+
+    private static func currentFlags(for fileDescriptor: Int32) -> Int32? {
+        let flags = fcntl(fileDescriptor, F_GETFL)
+        return flags >= 0 ? flags : nil
+    }
+
+    private static func restore(
+        flags: Int32?,
+        for fileDescriptor: Int32,
+        setFlags: SetFlags
+    ) {
+        guard let flags else {
+            return
+        }
+        _ = setFlags(fileDescriptor, F_SETFL, flags)
+    }
+
+    private static func liveSetAttributes(
+        fileDescriptor: Int32,
+        action: Int32,
+        attributes: UnsafeMutablePointer<termios>
+    ) -> Int32 {
+        tcsetattr(fileDescriptor, action, attributes)
+    }
+
+    private static func liveSetFlags(
+        fileDescriptor: Int32,
+        command: Int32,
+        flags: Int32
+    ) -> Int32 {
+        fcntl(fileDescriptor, command, flags)
+    }
+
+    private static func liveClose(fileDescriptor: Int32) -> Int32 {
+        close(fileDescriptor)
     }
 }
