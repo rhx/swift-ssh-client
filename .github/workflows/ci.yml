@@ -13,8 +13,16 @@ concurrency:
 
 jobs:
   build-and-test-macos:
-    name: macOS
+    name: macOS (${{ matrix.feature.name }})
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - name: default
+            trait_flag: ""
+          - name: rsa
+            trait_flag: "--traits RSA"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,14 +36,34 @@ jobs:
         run: swift --version
 
       - name: Build
-        run: swift build --build-tests
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift build --build-tests ${{ matrix.feature.trait_flag }}
+          else
+            swift build --build-tests
+          fi
 
       - name: Run tests
-        run: swift test
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift test ${{ matrix.feature.trait_flag }}
+          else
+            swift test
+          fi
 
   build-and-test-linux:
-    name: Ubuntu 24.04
+    name: Ubuntu 24.04 (${{ matrix.feature.name }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - name: default
+            trait_flag: ""
+          - name: rsa
+            trait_flag: "--traits RSA"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,7 +77,19 @@ jobs:
         run: swift --version
 
       - name: Build
-        run: swift build --build-tests
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift build --build-tests ${{ matrix.feature.trait_flag }}
+          else
+            swift build --build-tests
+          fi
 
       - name: Run tests
-        run: swift test
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift test ${{ matrix.feature.trait_flag }}
+          else
+            swift test
+          fi
