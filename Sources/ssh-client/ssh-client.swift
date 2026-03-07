@@ -69,18 +69,19 @@ struct SSHClientCommand: AsyncParsableCommand {
         }
         
         if command.isEmpty {
+            let exitStatus: Int32
             do {
                 let terminal = LocalTerminalConfiguration.current()
                 let terminalMode = try LocalTerminalMode()
                 defer { terminalMode.restore() }
 
-                let exitStatus = try await client.startInteractiveShell(
+                let shellExitStatus = try await client.startInteractiveShell(
                     term: terminal.term,
                     terminalCharacterWidth: terminal.columns,
                     terminalRowHeight: terminal.rows
                 )
                 writeConnectionClosedLine(host: host)
-                Foundation.exit(Int32(exitStatus))
+                exitStatus = Int32(shellExitStatus)
             } catch {
                 writeStandardErrorLine("[ssh-client] Interactive shell error: \(error)")
                 if debug {
@@ -88,6 +89,7 @@ struct SSHClientCommand: AsyncParsableCommand {
                 }
                 Foundation.exit(255)
             }
+            Foundation.exit(exitStatus)
         } else {
             // Command execution mode
             do {
