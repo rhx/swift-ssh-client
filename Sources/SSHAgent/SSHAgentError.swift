@@ -6,7 +6,12 @@
 //
 import Foundation
 
-/// Errors that can occur during SSH agent communication.
+/// Errors raised whilst communicating with an SSH agent.
+///
+/// `SSHAgentError` captures failures in socket access, response parsing, key
+/// decoding, and agent-backed signing operations. The associated strings retain
+/// the lower-level detail needed for diagnostics without exposing transport
+/// internals as separate public types.
 public enum SSHAgentError: Error {
     case invalidKeyData(String)
     case communicationFailure(String)

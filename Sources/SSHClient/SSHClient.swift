@@ -10,14 +10,39 @@ import NIOPosix
 import NIOSSH
 import SSHAgent
 
-/// Configuration for SSH client connections
+/// Connection settings used to create an `SSHClient`.
+///
+/// `SSHClientConfiguration` groups the network endpoint, user name, optional
+/// password, and debug flag needed to establish an SSH client connection. The
+/// value is sendable so callers can prepare configuration on one concurrency
+/// domain and hand it to the client actor on another.
 public struct SSHClientConfiguration: Sendable {
+    /// Host name or address of the remote SSH server.
     public let host: String
+
+    /// TCP port used for the remote SSH server.
     public let port: Int
+
+    /// User name to present during authentication.
     public let username: String
+
+    /// Password to use for password-based authentication, if enabled.
     public let password: String?
+
+    /// Whether to emit debug logging during client setup and session handling.
     public let debug: Bool
-    
+
+    /// Create a complete set of SSH client connection settings.
+    ///
+    /// The initialiser keeps the most common SSH defaults, including port `22`
+    /// and disabled password authentication unless a password is provided.
+    ///
+    /// - Parameters:
+    ///   - host: Host name or address of the remote SSH server.
+    ///   - port: TCP port used for the remote SSH server.
+    ///   - username: User name to present during authentication.
+    ///   - password: Password to use for password-based authentication.
+    ///   - debug: Whether to emit debug logging.
     public init(host: String, port: Int = 22, username: String, password: String? = nil, debug: Bool = false) {
         self.host = host
         self.port = port
@@ -26,7 +51,16 @@ public struct SSHClientConfiguration: Sendable {
         self.debug = debug
     }
     
-    /// Parse destination string in format user@host[:port]
+    /// Parse a destination string in `user@host[:port]` form.
+    ///
+    /// The parser accepts the same condensed destination style commonly used by
+    /// command-line SSH clients. When the user name is omitted, it falls back to
+    /// `defaultUsername` or the current local account name.
+    ///
+    /// - Parameters:
+    ///   - destination: Destination string to parse.
+    ///   - defaultUsername: Optional fallback user name.
+    /// - Returns: Host, port, and user name extracted from the destination.
     public static func parseDestination(_ destination: String, defaultUsername: String? = nil) -> (host: String, port: Int, username: String) {
         let username: String
         let hostPort: String
@@ -50,13 +84,34 @@ public struct SSHClientConfiguration: Sendable {
     }
 }
 
-/// Configuration for port forwarding
+/// Local forwarding settings used to bind a listener and open a direct TCP/IP channel.
+///
+/// `PortForwardingConfiguration` describes the local address to bind and the
+/// remote host and port that should receive forwarded traffic once the SSH
+/// session opens the corresponding direct TCP/IP channel.
 public struct PortForwardingConfiguration: Sendable {
+    /// Local host name or address to bind for the forwarding listener.
     public let bindHost: String
+
+    /// Local TCP port to bind for the forwarding listener.
     public let bindPort: Int
+
+    /// Remote host that should receive forwarded traffic.
     public let targetHost: String
+
+    /// Remote TCP port that should receive forwarded traffic.
     public let targetPort: Int
-    
+
+    /// Create a local forwarding configuration.
+    ///
+    /// The initialiser defaults the bind host to `localhost`, matching the
+    /// conventional SSH behaviour for local-only forwards.
+    ///
+    /// - Parameters:
+    ///   - bindHost: Local host name or address to bind.
+    ///   - bindPort: Local TCP port to bind.
+    ///   - targetHost: Remote host that should receive forwarded traffic.
+    ///   - targetPort: Remote TCP port that should receive forwarded traffic.
     public init(bindHost: String = "localhost", bindPort: Int, targetHost: String, targetPort: Int) {
         self.bindHost = bindHost
         self.bindPort = bindPort
@@ -64,7 +119,13 @@ public struct PortForwardingConfiguration: Sendable {
         self.targetPort = targetPort
     }
     
-    /// Parse listen string in format [bind_address:]port:host:hostport
+    /// Parse a forwarding rule in `[bind_address:]port:host:hostport` form.
+    ///
+    /// The parser mirrors the `-L` syntax used by `ssh`. It accepts either the
+    /// short three-field form or the explicit four-field form with a bind host.
+    ///
+    /// - Parameter listenString: Forwarding rule to parse.
+    /// - Returns: Parsed forwarding settings, or `nil` if the rule is invalid.
     public static func parseListen(_ listenString: String) -> PortForwardingConfiguration? {
         var components = listenString.split(separator: ":")
         var bindHost: Substring = "localhost"
@@ -88,12 +149,27 @@ public struct PortForwardingConfiguration: Sendable {
     }
 }
 
-/// Result of command execution
+/// Output captured from a completed remote command.
+///
+/// `CommandResult` preserves the remote exit status together with the bytes read
+/// from standard output and standard error. Callers can decode those payloads in
+/// whatever text or binary form is appropriate for the command they ran.
 public struct CommandResult: Sendable {
+    /// Exit status reported by the remote command.
     public let exitStatus: Int
+
+    /// Bytes received on the remote standard output stream.
     public let output: Data
+
+    /// Bytes received on the remote standard error stream.
     public let errorOutput: Data
-    
+
+    /// Create a command result from captured remote process state.
+    ///
+    /// - Parameters:
+    ///   - exitStatus: Exit status reported by the remote command.
+    ///   - output: Bytes received on standard output.
+    ///   - errorOutput: Bytes received on standard error.
     public init(exitStatus: Int, output: Data = Data(), errorOutput: Data = Data()) {
         self.exitStatus = exitStatus
         self.output = output
@@ -101,7 +177,12 @@ public struct CommandResult: Sendable {
     }
 }
 
-/// SSH Client actor for managing SSH connections and operations
+/// Actor that manages SSH connections, sessions, and local forwards.
+///
+/// `SSHClient` owns the underlying `SwiftNIO` event loop resources and the root
+/// SSH connection channel. It exposes async methods for connecting, running a
+/// remote command, starting an interactive shell, and establishing local port
+/// forwards without requiring callers to assemble a `NIOSSH` pipeline directly.
 @available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public actor SSHClient {
     private let configuration: SSHClientConfiguration
@@ -109,7 +190,14 @@ public actor SSHClient {
     private var connection: Channel?
     private let ownsEventLoopGroup: Bool
     
-    /// Initialize SSH client with configuration
+    /// Create an SSH client for the supplied configuration.
+    ///
+    /// Callers can either inject an existing event loop group or let the actor
+    /// create and own a single-threaded group for its own lifetime.
+    ///
+    /// - Parameters:
+    ///   - configuration: Connection settings for the SSH client.
+    ///   - eventLoopGroup: Optional event loop group to reuse.
     public init(configuration: SSHClientConfiguration, eventLoopGroup: EventLoopGroup? = nil) {
         self.configuration = configuration
         if let eventLoopGroup = eventLoopGroup {
@@ -127,7 +215,13 @@ public actor SSHClient {
         }
     }
     
-    /// Connect to the SSH server
+    /// Establish the underlying SSH connection if one is not already open.
+    ///
+    /// The method configures authentication delegates, builds the root `NIOSSH`
+    /// pipeline, and connects the client bootstrap to the configured host and
+    /// port. Repeated calls are harmless once the connection is active.
+    ///
+    /// - Throws: `SSHClientError` or transport errors if the connection fails.
     public func connect() async throws {
         guard connection == nil else { return } // Already connected
         
@@ -159,7 +253,15 @@ public actor SSHClient {
         connection = try await bootstrap.connect(host: configuration.host, port: configuration.port).get()
     }
     
-    /// Execute a command on the remote server
+    /// Execute a non-interactive command on the remote server.
+    ///
+    /// The client opens a session channel, sends an exec request, buffers stdout
+    /// and stderr until the channel finishes draining, and then returns the
+    /// collected output together with the remote exit status.
+    ///
+    /// - Parameter command: Command string to execute remotely.
+    /// - Returns: Buffered output and exit status from the remote command.
+    /// - Throws: `SSHClientError` or transport errors if execution fails.
     public func executeCommand(_ command: String) async throws -> CommandResult {
         try await connect()
         guard let connection = connection else {
@@ -208,7 +310,21 @@ public actor SSHClient {
         return CommandResult(exitStatus: exitStatus, output: output, errorOutput: errorOutput)
     }
 
-    /// Start an interactive shell on the remote server using a pseudo-terminal.
+    /// Start an interactive remote shell using a pseudo-terminal request.
+    ///
+    /// The method opens a session channel, requests a pseudo-terminal with the
+    /// supplied terminal metadata, and then waits until the remote shell exits.
+    /// The returned value is the remote shell's exit status.
+    ///
+    /// - Parameters:
+    ///   - term: Terminal type to request from the remote server.
+    ///   - terminalCharacterWidth: Terminal width in character cells.
+    ///   - terminalRowHeight: Terminal height in character cells.
+    ///   - terminalPixelWidth: Terminal width in pixels, if known.
+    ///   - terminalPixelHeight: Terminal height in pixels, if known.
+    ///   - terminalModes: Terminal mode flags to send with the request.
+    /// - Returns: Exit status reported by the remote shell.
+    /// - Throws: `SSHClientError` or transport errors if the shell cannot be started.
     @discardableResult
     public func startInteractiveShell(
         term: String,
@@ -258,7 +374,15 @@ public actor SSHClient {
         return try await exitStatusPromise.futureResult.get()
     }
     
-    /// Start port forwarding
+    /// Start a local forwarding server for the supplied configuration.
+    ///
+    /// The returned server binds a local listener and, for each inbound local
+    /// connection, opens a matching SSH direct TCP/IP channel towards the target
+    /// host and port described by the configuration.
+    ///
+    /// - Parameter config: Forwarding settings for the listener and target.
+    /// - Returns: A started forwarding server wrapper.
+    /// - Throws: `SSHClientError` or transport errors if setup fails.
     public func startPortForwarding(_ config: PortForwardingConfiguration) async throws -> PortForwardingServer {
         try await connect()
         guard let connection = connection else {
@@ -294,7 +418,12 @@ public actor SSHClient {
         return server
     }
     
-    /// Disconnect from the SSH server
+    /// Close the current SSH connection, if one is active.
+    ///
+    /// After disconnection, the actor can establish a new connection later by
+    /// calling `connect()` again.
+    ///
+    /// - Throws: Transport errors if the channel close fails.
     public func disconnect() async throws {
         if let connection = connection {
             try await connection.close().get()
@@ -302,7 +431,7 @@ public actor SSHClient {
         }
     }
     
-    /// Check if connected to the server
+    /// Whether the underlying SSH connection channel is currently active.
     public var isConnected: Bool {
         connection?.isActive ?? false
     }
@@ -310,6 +439,11 @@ public actor SSHClient {
 
 // MARK: - Error Types
 
+/// Errors raised by the high-level SSH client API.
+///
+/// `SSHClientError` groups the package's own connection, authentication, and
+/// channel-management failures. Lower-level transport and `NIOSSH` errors are
+/// still surfaced directly where that gives callers more specific information.
 public enum SSHClientError: Error, Sendable {
     case connectionNotEstablished
     case passwordAuthenticationNotSupported
