@@ -1,6 +1,7 @@
 # ssh-client
 
-A modern, high-level SSH client for Swift, built on top of [SwiftNIO](https://github.com/apple/swift-nio)
+A modern, high-level SSH client for Swift,
+built on top of [SwiftNIO](https://github.com/apple/swift-nio)
 and [SwiftNIO SSH](https://github.com/apple/swift-nio-ssh).
 
 ## What is ssh-client?
@@ -98,7 +99,7 @@ its input (essential for certain command-line utilities).
 
 ### Remote Port Forwarding and Global Requests
 
-Support for remote port forwarding (Reverse Tunneling) and arbitrary global requests
+Support for remote port forwarding (Reverse Tunnelling) and arbitrary global requests
 is currently not implemented in the high-level `SSHClient` API, though the underlying
 `NIOSSH` framework provides the necessary primitives.
 
