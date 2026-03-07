@@ -333,7 +333,7 @@ public actor SSHAgent {
     /// All cryptographic operations occur within the agent's secure environment.
     ///
     /// - Parameter data: The data to be signed by the SSH agent
-    /// - Parameter usingKey: The SSH agent key to use for signing
+    /// - Parameter key: The SSH agent key to use for signing
     /// - Parameter flags: Optional signing flags to specify algorithm preferences
     /// - Returns: The signature data returned by the SSH agent
     /// - Throws: `SSHAgentError` if the signing operation fails or communication with the agent fails

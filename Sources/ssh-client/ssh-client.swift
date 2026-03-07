@@ -8,27 +8,50 @@ import Foundation
 import ArgumentParser
 import SSHClient
 
-/// An SSH client command-line tool using SwiftNIO and NIOSSH.
+/// Command-line entry point for the SSH client executable.
+///
+/// `SSHClientCommand` defines the public command-line interface exposed by the
+/// `ssh-client` binary. It collects the destination, optional forwarding rules,
+/// authentication inputs, and any remote command so the executable can either
+/// start an interactive shell or execute a single remote request.
 @main
 struct SSHClientCommand: AsyncParsableCommand {
+    /// Static command metadata used by ArgumentParser.
+    ///
+    /// The configuration sets the executable name that appears in generated help
+    /// output and in parser diagnostics.
     static let configuration = CommandConfiguration(
         commandName: "ssh-client"
     )
+
+    /// Local forwarding rules to start before the SSH session begins.
     @Option(name: [.long, .customShort("L")], help: "Local port forwarding in the format [bind_address:]port:host:hostport")
     var listen: [String] = []
 
+    /// Remote destination in `user@host[:port]` form.
     @Argument(help: "The SSH destination in the format user@host[:port]")
     var destination: String
 
+    /// Remote command to run after connecting.
     @Argument(parsing: .captureForPassthrough, help: "The command to execute on the remote host. Omit to start an interactive shell.")
     var command: [String] = []
 
+    /// Optional password for password-based authentication.
     @Option(name: .shortAndLong, help: "Password for authentication (discouraged on command line)")
     var password: String?
 
+    /// Enable additional diagnostic output from the CLI and library.
     @Flag(name: .shortAndLong, help: "Enable verbose debug logging")
     var debug: Bool = false
 
+    /// Run the command-line client.
+    ///
+    /// The command starts any requested local forwards first, then either executes a
+    /// remote command or opens an interactive shell. In interactive mode it also
+    /// manages terminal state and prints the usual connection-closed message when the
+    /// remote shell exits.
+    ///
+    /// - Throws: Any uncaught argument parsing or asynchronous setup error.
     func run() async throws {
         let (host, port, user) = SSHClientConfiguration.parseDestination(destination)
         let config = SSHClientConfiguration(
