@@ -1,0 +1,102 @@
+name: Build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build"
+        required: false
+        type: string
+
+jobs:
+  build-macos:
+    name: macOS archive
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.1.1"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build release binary
+        run: swift build -c release --product ssh-client
+
+      - name: Create archive
+        shell: bash
+        run: |
+          REF_NAME="${GITHUB_REF_NAME}"
+          if [[ -n "${{ inputs.ref }}" ]]; then
+            REF_NAME="${{ inputs.ref }}"
+          fi
+          ARCH="$(uname -m)"
+          mkdir -p artifact
+          cp .build/release/ssh-client artifact/
+          tar czf "ssh-client-${REF_NAME}-macos-${ARCH}.tar.gz" -C artifact ssh-client
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-client-macos
+          path: ssh-client-*.tar.gz
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ssh-client-*.tar.gz
+
+  build-linux:
+    name: Linux archive
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build release binary
+        run: swift build -c release --product ssh-client
+
+      - name: Create archive
+        shell: bash
+        run: |
+          REF_NAME="${GITHUB_REF_NAME}"
+          if [[ -n "${{ inputs.ref }}" ]]; then
+            REF_NAME="${{ inputs.ref }}"
+          fi
+          ARCH="$(uname -m)"
+          mkdir -p artifact
+          cp .build/release/ssh-client artifact/
+          tar czf "ssh-client-${REF_NAME}-linux-${ARCH}.tar.gz" -C artifact ssh-client
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-client-linux
+          path: ssh-client-*.tar.gz
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ssh-client-*.tar.gz
