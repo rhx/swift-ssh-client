@@ -10,6 +10,11 @@ let package = Package(
         .watchOS(.v6),
         .tvOS(.v13),
     ],
+    products: [
+        .library(name: "SSHClient", targets: ["SSHClient"]),
+        .library(name: "SSHAgent", targets: ["SSHAgent"]),
+        .executable(name: "ssh-client", targets: ["ssh-client"]),
+    ],
     traits: [
         .default(enabledTraits: []),
         .trait(
