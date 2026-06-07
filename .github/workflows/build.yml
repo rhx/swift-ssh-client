@@ -12,8 +12,18 @@ on:
 
 jobs:
   build-macos:
-    name: macOS archive
+    name: macOS archive (${{ matrix.feature.name }})
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - name: default
+            trait_flag: ""
+            suffix: ""
+          - name: rsa
+            trait_flag: "--traits RSA"
+            suffix: "-rsa"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,7 +40,13 @@ jobs:
         run: swift --version
 
       - name: Build release binary
-        run: swift build -c release --product ssh-client
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift build -c release --product ssh-client ${{ matrix.feature.trait_flag }}
+          else
+            swift build -c release --product ssh-client
+          fi
 
       - name: Create archive
         shell: bash
@@ -42,12 +58,12 @@ jobs:
           ARCH="$(uname -m)"
           mkdir -p artifact
           cp .build/release/ssh-client artifact/
-          tar czf "ssh-client-${REF_NAME}-macos-${ARCH}.tar.gz" -C artifact ssh-client
+          tar czf "ssh-client-${REF_NAME}-macos-${ARCH}${{ matrix.feature.suffix }}.tar.gz" -C artifact ssh-client
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-client-macos
+          name: ssh-client-macos-${{ matrix.feature.name }}
           path: ssh-client-*.tar.gz
 
       - name: Upload release asset
@@ -57,8 +73,18 @@ jobs:
           files: ssh-client-*.tar.gz
 
   build-linux:
-    name: Linux archive
+    name: Linux archive (${{ matrix.feature.name }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - name: default
+            trait_flag: ""
+            suffix: ""
+          - name: rsa
+            trait_flag: "--traits RSA"
+            suffix: "-rsa"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +101,13 @@ jobs:
         run: swift --version
 
       - name: Build release binary
-        run: swift build -c release --product ssh-client
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.feature.trait_flag }}" ]]; then
+            swift build -c release --product ssh-client ${{ matrix.feature.trait_flag }}
+          else
+            swift build -c release --product ssh-client
+          fi
 
       - name: Create archive
         shell: bash
@@ -87,12 +119,12 @@ jobs:
           ARCH="$(uname -m)"
           mkdir -p artifact
           cp .build/release/ssh-client artifact/
-          tar czf "ssh-client-${REF_NAME}-linux-${ARCH}.tar.gz" -C artifact ssh-client
+          tar czf "ssh-client-${REF_NAME}-linux-${ARCH}${{ matrix.feature.suffix }}.tar.gz" -C artifact ssh-client
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-client-linux
+          name: ssh-client-linux-${{ matrix.feature.name }}
           path: ssh-client-*.tar.gz
 
       - name: Upload release asset

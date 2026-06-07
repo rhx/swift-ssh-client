@@ -7,7 +7,18 @@
 import Foundation
 import NIOSSH
 
+/// Helper for mapping SSH agent signatures to `NIOSSH` signatures.
+///
+/// The SSH agent protocol returns algorithm-labelled signature payloads in SSH
+/// wire format. `SSHAgentSignature` centralises the logic that chooses signing
+/// flags for outgoing requests and converts those wire-format replies into the
+/// concrete `NIOSSHSignature` values expected by user-authentication code.
 enum SSHAgentSignature {
+    /// Determine the preferred agent signing flags for a public key.
+    ///
+    /// RSA keys can request stronger SHA-2 based signature algorithms when the
+    /// package is built with the `RSA` trait. Other key types use the agent's
+    /// default signing behaviour.
     static func preferredSigningFlags(for publicKey: NIOSSHPublicKey) -> SSHAgentSignFlags {
         let keyType = String(openSSHPublicKey: publicKey).split(separator: " ").first.map(String.init) ?? ""
 
@@ -23,6 +34,19 @@ enum SSHAgentSignature {
         }
     }
 
+    /// Convert an SSH agent reply into a `NIOSSH` signature value.
+    ///
+    /// The conversion inspects the public-key algorithm first so it can validate
+    /// the wire-format signature payload against the algorithms that are valid
+    /// for that key. RSA signatures are only accepted when RSA support is enabled
+    /// for the package build.
+    ///
+    /// - Parameters:
+    ///   - signatureData: Raw signature payload returned by the SSH agent.
+    ///   - publicKey: Public key used to validate the expected signature type.
+    ///   - debug: Whether to emit diagnostic output during parsing.
+    /// - Returns: A `NIOSSHSignature` matching the key type and reply payload.
+    /// - Throws: `SSHAgentError` if the payload is malformed or incompatible.
     static func convertToNIOSSH(_ signatureData: Data, for publicKey: NIOSSHPublicKey, debug: Bool = false) throws -> NIOSSHSignature {
         let keyType = String(openSSHPublicKey: publicKey).split(separator: " ").first.map(String.init) ?? ""
 
@@ -66,6 +90,18 @@ enum SSHAgentSignature {
         }
     }
 
+    /// Read a wire-format agent signature and validate its algorithm label.
+    ///
+    /// SSH agent replies encode the signature algorithm and signature bytes as
+    /// length-prefixed fields. This helper parses that structure once so callers
+    /// can focus on key-specific conversion.
+    ///
+    /// - Parameters:
+    ///   - signatureData: Raw signature payload from the SSH agent.
+    ///   - expectedTypes: Set of acceptable algorithm names for the payload.
+    ///   - debug: Whether to emit diagnostic output during parsing.
+    /// - Returns: The parsed algorithm label and raw signature bytes.
+    /// - Throws: `SSHAgentError` if the payload is truncated or uses an unexpected algorithm.
     private static func readSignature(
         from signatureData: Data,
         expectedTypes: Set<String>,

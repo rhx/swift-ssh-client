@@ -6,17 +6,18 @@
 //
 import Foundation
 
-/// Signing flags recognised by the SSH agent protocol.
+/// SSH agent signing flags defined by the OpenSSH agent protocol.
 ///
-/// These option bits let the client request a specific signature algorithm when
-/// the agent supports multiple variants for the same key type. The RSA-related
-/// flags are used to prefer SHA-2 signatures over legacy RSA behaviour.
+/// These flags let the client request a specific signature algorithm when the
+/// agent supports more than one variant for the same key type. The RSA-specific
+/// flags are used to prefer SHA-2 based signatures over legacy RSA behaviour.
 public struct SSHAgentSignFlags: OptionSet, Sendable {
     public let rawValue: UInt32
 
-    /// Create a set of SSH agent flags from a raw protocol bit pattern.
+    /// Create a flag set from the raw protocol bit pattern.
     ///
-    /// - Parameter rawValue: Raw unsigned 32-bit flag value used on the wire.
+    /// The raw value matches the unsigned 32-bit field used in SSH agent signing
+    /// requests.
     public init(rawValue: UInt32) {
         self.rawValue = rawValue
     }

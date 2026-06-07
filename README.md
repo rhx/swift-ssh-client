@@ -45,6 +45,8 @@ let config = SSHClientConfiguration(
 let client = SSHClient(configuration: config)
 ```
 
+> **Note on SSH Agent Signing**: When built with the `RSA` trait and the matching `rsa-agent` branch of `rhx/swift-nio-ssh`, `ssh-client` delegates public-key user-authentication signatures to `ssh-agent`, so private key material remains in the agent. Without the `RSA` trait, Ed25519 and ECDSA agent signing remain available. See [SSHAgent.md](SSHAgent.md) for the current dependency and trait requirements.
+
 ### Command Execution
 
 Executing a command is straightforward using the `executeCommand` method,
