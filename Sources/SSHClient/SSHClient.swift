@@ -273,8 +273,8 @@ public actor SSHClient {
         let errorOutputPromise = connection.eventLoop.makePromise(of: Data.self)
         
         if configuration.debug { print("[debug] starting SSH session channel creation") }
-        
-        let childChannel = try await connection.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
+
+        let childChannel: EventLoopFuture<Channel> = connection.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
             let promise = connection.eventLoop.makePromise(of: Channel.self)
             if self.configuration.debug { print("[debug] creating session channel") }
             sshHandler.createChannel(promise) { childChannel, channelType in
@@ -299,15 +299,57 @@ public actor SSHClient {
                 }
             }
             return promise.futureResult
-        }.get()
-        
-        // Wait for command completion
-        try await childChannel.closeFuture.get()
-        let exitStatus = try await exitStatusPromise.futureResult.get()
-        let output = try await outputPromise.futureResult.get()
-        let errorOutput = try await errorOutputPromise.futureResult.get()
-        
-        return CommandResult(exitStatus: exitStatus, output: output, errorOutput: errorOutput)
+        }
+
+        // Collect the result through a helper that guarantees the three result
+        // promises are completed on every exit path (success or failure), so a
+        // failed channel creation can never leave a promise unfulfilled and trap
+        // NIO's debug `EventLoopPromise.deinit` precondition.
+        return try await SSHClient.collectCommandResult(
+            channelCreation: childChannel,
+            exitStatusPromise: exitStatusPromise,
+            outputPromise: outputPromise,
+            errorOutputPromise: errorOutputPromise
+        ).get()
+    }
+
+    /// Awaits channel creation and collects the command result from the supplied
+    /// promises, guaranteeing that all three promises are completed on every exit
+    /// path (so none leak unfulfilled and trap NIO's debug `deinit` check).
+    ///
+    /// - Parameters:
+    ///   - channelCreation: A future for the session channel.
+    ///   - exitStatusPromise: Promise fulfilled with the remote exit status.
+    ///   - outputPromise: Promise fulfilled with captured standard output.
+    ///   - errorOutputPromise: Promise fulfilled with captured standard error.
+    /// - Returns: A future for the assembled ``CommandResult``.
+    static func collectCommandResult(
+        channelCreation: EventLoopFuture<Channel>,
+        exitStatusPromise: EventLoopPromise<Int>,
+        outputPromise: EventLoopPromise<Data>,
+        errorOutputPromise: EventLoopPromise<Data>
+    ) -> EventLoopFuture<CommandResult> {
+        // If channel creation (or the wait for completion) fails, the three
+        // result promises are never wired to a handler and would otherwise leak
+        // unfulfilled, tripping NIO's debug `EventLoopPromise.deinit` precondition
+        // and trapping the process. Fail them explicitly on the error path so
+        // every promise is completed exactly once.
+        channelCreation.flatMap { channel in
+            channel.closeFuture.flatMap {
+                exitStatusPromise.futureResult.flatMap { exitStatus in
+                    outputPromise.futureResult.flatMap { output in
+                        errorOutputPromise.futureResult.map { errorOutput in
+                            CommandResult(exitStatus: exitStatus, output: output, errorOutput: errorOutput)
+                        }
+                    }
+                }
+            }
+        }.flatMapError { error in
+            exitStatusPromise.fail(error)
+            outputPromise.fail(error)
+            errorOutputPromise.fail(error)
+            return channelCreation.eventLoop.makeFailedFuture(error)
+        }
     }
 
     /// Start an interactive remote shell using a pseudo-terminal request.
